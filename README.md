@@ -177,14 +177,25 @@
    - **For Android Emulator**: `EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8000` *(Android emulators route host machine localhost via 10.0.2.2)*
    - **For Physical Devices on LAN**: `EXPO_PUBLIC_API_BASE_URL=http://<YOUR_LOCAL_IP>:8000`
 4. Install dependencies:
-   ```bash
-   npm install
+---
+
+## ☁️ Deployment on Render
+
+The backend is configured for 1-click automated deployment using Docker & Render Blueprint (`render.yaml`).
+
+### Steps to Deploy Backend on Render:
+
+1. Log in to [Render](https://dashboard.render.com/).
+2. Click **New +** -> **Blueprint**.
+3. Connect your repository: `https://github.com/Fayas2007/naren-exam-stress-analyzer`.
+4. Configure the environment variables when prompted:
+   - `DATABASE_URL`: Your Neon PostgreSQL connection string (`postgresql://...`)
+   - `GEMINI_API_KEY`: Your Google Gemini API key
+5. Click **Apply**. Render will automatically build the R Plumber Docker container, execute migrations, and assign a public HTTPS URL (e.g., `https://exam-stress-analyzer-api.onrender.com`).
+6. Update your mobile app's `.env`:
+   ```ini
+   EXPO_PUBLIC_API_BASE_URL=https://exam-stress-analyzer-api.onrender.com
    ```
-5. Start the Expo development server:
-   ```bash
-   npx expo start
-   ```
-6. Press `w` for web preview, `a` for Android emulator, or scan the QR code with the Expo Go mobile app.
 
 ---
 
