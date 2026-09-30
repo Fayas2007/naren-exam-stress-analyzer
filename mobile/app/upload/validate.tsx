@@ -20,14 +20,16 @@ import Button from '../../src/components/Button';
 import Input from '../../src/components/Input';
 import LoadingView from '../../src/components/LoadingView';
 import ErrorView from '../../src/components/ErrorView';
+import { getDatasetSession } from '../../src/utils/datasetSession';
 
-// Helper function to parse CSV lines respecting quotes
+// Helper function to parse CSV lines respecting quotes safely
 function parseCsv(text: string): { headers: string[]; rows: string[][] } {
-  if (!text || !text.trim()) return { headers: [], rows: [] };
+  if (!text || typeof text !== 'string' || !text.trim()) return { headers: [], rows: [] };
   const lines = text.trim().split(/\r\n|\n|\r/);
   if (lines.length === 0) return { headers: [], rows: [] };
 
   const parseLine = (line: string): string[] => {
+    if (!line) return [];
     const result: string[] = [];
     let current = '';
     let inQuotes = false;
@@ -51,24 +53,26 @@ function parseCsv(text: string): { headers: string[]; rows: string[][] } {
     return result;
   };
 
-  const headers = parseLine(lines[0]);
+  const headers = parseLine(lines[0] || '').map((h) => (h ? String(h).trim() : ''));
   const rows: string[][] = [];
   for (let i = 1; i < lines.length; i++) {
-    const rawLine = lines[i].trim();
+    const rawLine = lines[i]?.trim();
     if (!rawLine) continue;
     rows.push(parseLine(rawLine));
   }
   return { headers, rows };
 }
 
-function parseStressScore(val: string): number | null {
-  if (!val || val === '' || val.toLowerCase() === 'na' || val.toLowerCase() === 'null') {
+function parseStressScore(val: any): number | null {
+  if (val === undefined || val === null) return null;
+  const str = String(val).trim().toLowerCase();
+  if (!str || str === '' || str === 'na' || str === 'null') {
     return null;
   }
-  const clean = val.replace(/['"]/g, '').trim().toLowerCase();
-  if (clean === 'low') return 2.5;
-  if (clean === 'moderate' || clean === 'medium') return 5.5;
-  if (clean === 'high' || clean === 'severe') return 8.5;
+  const clean = str.replace(/['"]/g, '').trim();
+  if (clean === 'low' || clean === 'mild' || clean === 'minimal') return 2.5;
+  if (clean === 'moderate' || clean === 'medium' || clean === 'avg') return 5.5;
+  if (clean === 'high' || clean === 'severe' || clean === 'extreme') return 8.5;
   const num = parseFloat(clean);
   return isNaN(num) ? null : num;
 }
@@ -111,15 +115,18 @@ function computeClientValidation(
     };
   }
 
-  // Map fields to header column indices
+  // Map fields to header column indices safely
   const colIndices: Record<string, { index: number; colName: string }> = {};
-  for (const [fieldKey, colName] of Object.entries(mappings)) {
-    if (!colName) continue;
-    const idx = headers.findIndex(
-      (h) => h.trim().toLowerCase() === (colName as string).trim().toLowerCase()
-    );
-    if (idx !== -1) {
-      colIndices[fieldKey] = { index: idx, colName: colName as string };
+  if (mappings && typeof mappings === 'object') {
+    for (const [fieldKey, colName] of Object.entries(mappings)) {
+      if (!colName || typeof colName !== 'string') continue;
+      const targetName = colName.trim().toLowerCase();
+      const idx = headers.findIndex(
+        (h) => h && h.toLowerCase() === targetName
+      );
+      if (idx !== -1) {
+        colIndices[fieldKey] = { index: idx, colName };
+      }
     }
   }
 
@@ -127,6 +134,7 @@ function computeClientValidation(
   const seenSignatures = new Set<string>();
   let duplicateRows = 0;
   for (const row of rows) {
+    if (!Array.isArray(row)) continue;
     const sig = row.join('|||');
     if (seenSignatures.has(sig)) {
       duplicateRows++;
@@ -142,8 +150,10 @@ function computeClientValidation(
   for (const [fieldKey, info] of Object.entries(colIndices)) {
     let missingCount = 0;
     for (const row of rows) {
-      const val = row[info.index] ?? '';
-      if (!val || val.trim() === '' || val.toLowerCase() === 'na' || val.toLowerCase() === 'null') {
+      if (!Array.isArray(row)) continue;
+      const rawVal = row[info.index];
+      const val = rawVal !== undefined && rawVal !== null ? String(rawVal).trim() : '';
+      if (!val || val === '' || val.toLowerCase() === 'na' || val.toLowerCase() === 'null') {
         missingCount++;
       }
     }
@@ -167,15 +177,17 @@ function computeClientValidation(
   const stressInfo = colIndices.stress_score;
 
   for (const row of rows) {
+    if (!Array.isArray(row)) continue;
     let isValid = true;
 
     if (stressInfo) {
-      const rawStress = row[stressInfo.index] ?? '';
+      const rawStress = row[stressInfo.index];
       const parsedStress = parseStressScore(rawStress);
       if (parsedStress === null) {
         isValid = false;
       } else {
-        if (rawStress.toLowerCase() === 'low' || rawStress.toLowerCase() === 'high' || rawStress.toLowerCase() === 'medium') {
+        const strStress = String(rawStress || '').toLowerCase();
+        if (strStress.includes('low') || strStress.includes('high') || strStress.includes('med')) {
           hasCategoricalStress = true;
         }
         if (parsedStress < minStress) minStress = parsedStress;
@@ -186,8 +198,9 @@ function computeClientValidation(
     if (isValid && missingHandling === 'exclude_incomplete_records') {
       for (const [fieldKey, info] of Object.entries(colIndices)) {
         if (fieldKey === 'stress_score') continue;
-        const val = row[info.index] ?? '';
-        if (!val || val.trim() === '' || val.toLowerCase() === 'na' || val.toLowerCase() === 'null') {
+        const rawVal = row[info.index];
+        const val = rawVal !== undefined && rawVal !== null ? String(rawVal).trim() : '';
+        if (!val || val === '' || val.toLowerCase() === 'na' || val.toLowerCase() === 'null') {
           isValid = false;
           break;
         }
@@ -237,26 +250,40 @@ function computeClientValidation(
 export default function ValidateScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
-    datasetId: string;
-    filename: string;
-    mappingsJson: string;
-    csvText: string;
+    datasetId?: string;
+    filename?: string;
+    mappingsJson?: string;
+    csvText?: string;
   }>();
 
-  const datasetId = params.datasetId;
-  const filename = params.filename || 'Exam Survey Dataset';
-  const mappings: ColumnMappingState = params.mappingsJson
-    ? JSON.parse(params.mappingsJson)
-    : { stress_score: '' };
-  const csvText = params.csvText || '';
+  // Safely merge session with params to prevent navigation crashes
+  const session = getDatasetSession();
+  const datasetId = (params.datasetId || session.datasetId || '').toString();
+  const filename = (params.filename || session.filename || 'Exam Survey Dataset').toString();
+  const csvText = (session.rawCsvText || params.csvText || '').toString();
 
+  // Safe mapping resolution
+  let resolvedMappings: ColumnMappingState = { stress_score: '' };
+  if (session.mappings && session.mappings.stress_score) {
+    resolvedMappings = { ...session.mappings };
+  } else if (params.mappingsJson) {
+    try {
+      resolvedMappings = typeof params.mappingsJson === 'string'
+        ? JSON.parse(params.mappingsJson)
+        : (params.mappingsJson as any);
+    } catch {
+      resolvedMappings = { stress_score: '' };
+    }
+  }
+
+  const [mappings] = useState<ColumnMappingState>(resolvedMappings);
   const [loading, setLoading] = useState(false);
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [validationData, setValidationData] = useState<ValidationResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
 
   const [analysisTitle, setAnalysisTitle] = useState(
-    `${filename.replace(/\.csv$/i, '')} Analysis`
+    `${filename.replace(/\.[^/.]+$/, '')} Analysis`
   );
   const [missingHandling, setMissingHandling] = useState<string>(
     'exclude_incomplete_records'
@@ -410,7 +437,10 @@ export default function ValidateScreen() {
       </Card>
 
       {/* Column Integrity & Missing Values Breakdown */}
-      {validationData?.column_quality && Object.keys(validationData.column_quality).length > 0 && (
+      {validationData?.column_quality &&
+       typeof validationData.column_quality === 'object' &&
+       !Array.isArray(validationData.column_quality) &&
+       Object.keys(validationData.column_quality).length > 0 && (
         <Card style={styles.breakdownCard}>
           <View style={styles.breakdownHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -424,10 +454,18 @@ export default function ValidateScreen() {
 
           <View style={styles.columnList}>
             {Object.entries(validationData.column_quality).map(([fieldKey, colInfo]) => {
-              const completeness = Math.max(0, Math.min(100, Math.round(100 - colInfo.missing_percentage)));
-              const isComplete = colInfo.missing_count === 0;
+              if (!colInfo || typeof colInfo !== 'object') return null;
+              const missingPct = typeof colInfo.missing_percentage === 'number'
+                ? colInfo.missing_percentage
+                : Number(colInfo.missing_percentage) || 0;
+              const missingCount = typeof colInfo.missing_count === 'number'
+                ? colInfo.missing_count
+                : Number(colInfo.missing_count) || 0;
+              const completeness = Math.max(0, Math.min(100, Math.round(100 - missingPct)));
+              const isComplete = missingCount === 0;
               const barColor = completeness >= 95 ? Colors.success : completeness >= 80 ? Colors.warning : Colors.error;
               const label = FIELD_LABELS[fieldKey] || fieldKey;
+              const origCol = colInfo.original_column || fieldKey;
 
               return (
                 <View key={fieldKey} style={styles.columnItem}>
@@ -435,7 +473,7 @@ export default function ValidateScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.columnFieldName}>{label}</Text>
                       <Text style={styles.columnOriginalHeader}>
-                        CSV Column: <Text style={{ fontWeight: '700', color: Colors.text }}>{colInfo.original_column}</Text>
+                        CSV Column: <Text style={{ fontWeight: '700', color: Colors.text }}>{origCol}</Text>
                       </Text>
                     </View>
                     <View style={[styles.completenessBadge, { backgroundColor: isComplete ? '#DCFCE7' : '#FEF3C7' }]}>
@@ -445,7 +483,7 @@ export default function ValidateScreen() {
                         color={isComplete ? '#166534' : '#92400E'}
                       />
                       <Text style={[styles.completenessBadgeText, { color: isComplete ? '#166534' : '#92400E' }]}>
-                        {isComplete ? '100% Complete (0 missing)' : `${completeness}% (${colInfo.missing_count} missing)`}
+                        {isComplete ? '100% Complete (0 missing)' : `${completeness}% (${missingCount} missing)`}
                       </Text>
                     </View>
                   </View>

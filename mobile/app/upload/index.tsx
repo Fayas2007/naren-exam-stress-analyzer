@@ -20,6 +20,7 @@ import Card from '../../src/components/Card';
 import Button from '../../src/components/Button';
 import LoadingView from '../../src/components/LoadingView';
 import { readFileAsText, readFileAsBase64 } from '../../src/utils/fileHelper';
+import { setDatasetSession } from '../../src/utils/datasetSession';
 
 const MAPPABLE_FIELDS: { key: keyof ColumnMappingState; label: string; icon: string; required: boolean; hint: string }[] = [
   { key: 'stress_score', label: 'Stress Score / Level', icon: 'activity', required: true, hint: 'Validated stress rating or scale' },
@@ -339,14 +340,21 @@ export default function UploadScreen() {
 
     if (!uploadResult) return;
 
-    // Navigate to validation screen
+    // Save session in memory to prevent huge CSV strings from breaking React Navigation
+    setDatasetSession({
+      datasetId: uploadResult.dataset_id,
+      filename: uploadResult.filename,
+      mappings: columnMappings,
+      rawCsvText: rawCsvText,
+      uploadResult: uploadResult,
+    });
+
+    // Navigate to validation screen cleanly
     router.push({
       pathname: '/upload/validate',
       params: {
         datasetId: uploadResult.dataset_id,
         filename: uploadResult.filename,
-        mappingsJson: JSON.stringify(columnMappings),
-        csvText: rawCsvText,
       },
     });
   };
