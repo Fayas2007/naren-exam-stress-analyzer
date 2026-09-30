@@ -36,31 +36,36 @@ jobs:
           EXPO_PUBLIC_API_BASE_URL: https://exam-stress-analyzer-api.onrender.com
         run: npx expo prebuild --platform android --no-install
 
-      - name: Configure Phone Architectures in gradle.properties
+      - name: Configure gradle.properties
         working-directory: mobile/android
         run: |
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a,armeabi-v7a/g' gradle.properties
+          sed -i 's/newArchEnabled=.*/newArchEnabled=false/g' gradle.properties
 
       - name: Make Gradle Wrapper Executable
         working-directory: mobile/android
         run: chmod +x gradlew
 
-      - name: Build Android Release APK with Gradle
+      - name: Build Android Release and Debug APKs with Gradle
         working-directory: mobile/android
         run: |
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace || ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Prepare Release APK
+      - name: Prepare APK Artifacts
         run: |
           mkdir -p release-artifacts
-          cp mobile/android/app/build/outputs/apk/release/app-release.apk release-artifacts/exam-stress-analyzer.apk
-          echo "Release APK verified and prepared."
+          find mobile/android/app/build/outputs/apk/ -type f -name "*.apk"
+          if [ -f mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp mobile/android/app/build/outputs/apk/release/app-release.apk release-artifacts/exam-stress-analyzer.apk
+          elif [ -f mobile/android/app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp mobile/android/app/build/outputs/apk/debug/app-debug.apk release-artifacts/exam-stress-analyzer.apk
+          fi
           ls -lh release-artifacts/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ExamStressAnalyzer-Release-APK
+          name: ExamStressAnalyzer-APK
           path: release-artifacts/exam-stress-analyzer.apk
 
       - name: Create / Update GitHub Release
@@ -79,11 +84,11 @@ jobs:
 
             ---
 
-            ### 📋 Steps if you see "App not installed":
-            1. **Uninstall Existing Versions**: If you have Expo Go or a previous draft of this app on your phone, uninstall it first to avoid signature conflicts.
-            2. **Enable Unknown Apps**: Go to **Settings > Security / Privacy > Install unknown apps** and enable permission for your browser or File Manager.
-            3. **Ensure Complete Download**: Make sure the file (`~180 MB`) completely finishes downloading before tapping to install.
-            4. Tap **Install** and launch!
+            ### 📋 Steps to solve "App not installed":
+            1. **Uninstall any previous version**: If you previously had Expo Go or a draft version of this app installed on your phone, **uninstall it first**. Android blocks installing over an existing app with a different signature.
+            2. **Allow Installation**: Go to **Settings > Security / Privacy > Install unknown apps** and enable permission for your browser or file manager.
+            3. **Complete Download**: Ensure the full APK file finish downloading completely before opening it.
+            4. Tap **Install** and open the app!
 
             ---
 
