@@ -1,6 +1,8 @@
 name: Build & Release Android APK
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -99,11 +101,11 @@ jobs:
 
             ### 🌟 Application Features:
             - **100% Standalone Offline Bundled**: No Metro dev server or computer connection required.
-            - **Cloud Backend Integration**: Live connection to `https://exam-stress-analyzer-api.onrender.com` (Neon PostgreSQL database).
+            - **Exam Stress Prediction Module**: Calibrated multivariate psychometric stress forecasting (exam type, study hours, sleep, preparation, anxiety) with probability distributions and factor contributions.
+            - **Publication-Grade R Graphics**: Complete 8-figure RStudio/ggplot2 visual console with theme customization and statistical layer toggles.
+            - **Native High-Fidelity PDF Export**: Full multi-page report generator with embedded vector SVG charts, PSS-10 norms, subgroup comparisons, and statistical findings.
+            - **Cloud Backend Integration**: Live connection to `https://exam-stress-analyzer-api.onrender.com` (PostgreSQL database).
             - **Multi-Format Ingestion**: Upload and analyze CSV, PDF, Word, and PowerPoint student survey files.
-            - **Statistical & Psychometric Engine**: Cronbach's alpha, PSS-10 norm comparisons, stress level classifications.
             - **AI Stress Copilot**: Instant Gemini-powered conversational guidance and statistical interpretations.
-            - **Interactive Visualizations**: Subgroup comparisons, correlation matrices, and stress distributions.
-            - **PDF Export**: Generate and share comprehensive medical/academic stress reports directly from your phone.
           files: release-artifacts/exam-stress-analyzer.apk
           token: ${{ secrets.GITHUB_TOKEN }}
