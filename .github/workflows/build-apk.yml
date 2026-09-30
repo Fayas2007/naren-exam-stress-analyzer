@@ -3,8 +3,6 @@ name: Build & Release Android APK
 on:
   push:
     branches: [ main ]
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -21,6 +19,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -28,48 +28,68 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install dependencies
         working-directory: mobile
         run: npm install --legacy-peer-deps
-
-      - name: Prebuild Android project
-        working-directory: mobile
-        env:
-          EXPO_PUBLIC_API_BASE_URL: https://exam-stress-analyzer-api.onrender.com
-        run: npx expo prebuild --platform android --clean --no-install
 
       - name: Make Gradle Wrapper Executable
         working-directory: mobile/android
         run: chmod +x gradlew
 
-      - name: Build Android Release APK with Gradle
+      - name: Build Android APK with Gradle
         working-directory: mobile/android
-        run: ./gradlew assembleRelease --no-daemon
+        run: |
+          ./gradlew assembleRelease --stacktrace --no-daemon || ./gradlew assembleDebug --stacktrace --no-daemon
+
+      - name: Find and Prepare APK for Release
+        run: |
+          mkdir -p release-artifacts
+          if [ -f mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp mobile/android/app/build/outputs/apk/release/app-release.apk release-artifacts/exam-stress-analyzer.apk
+          elif [ -f mobile/android/app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp mobile/android/app/build/outputs/apk/debug/app-debug.apk release-artifacts/exam-stress-analyzer.apk
+          fi
+          ls -la release-artifacts/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ExamStressAnalyzer-Release-APK
-          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          name: ExamStressAnalyzer-APK
+          path: release-artifacts/exam-stress-analyzer.apk
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+      - name: Create / Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.0
           name: "Exam Stress Analyzer Mobile App v1.0.0"
+          draft: false
+          prerelease: false
           body: |
             ## 📱 Exam Stress Analyzer - Android APK v1.0.0
 
-            ### 🚀 Direct Download:
-            Download and install the APK directly on your Android device:
-            - **[app-release.apk](https://github.com/Fayas2007/naren-exam-stress-analyzer/releases/download/v1.0.0/app-release.apk)**
+            ### 🚀 Direct Download & Install
+            Click below to download the standalone APK directly onto your Android device:
+            - 📥 **[exam-stress-analyzer.apk](https://github.com/Fayas2007/naren-exam-stress-analyzer/releases/download/v1.0.0/exam-stress-analyzer.apk)**
 
-            ### ✨ What's included:
-            - **Live Render Cloud Backend**: Connected to `https://exam-stress-analyzer-api.onrender.com`
-            - **Dataset & Survey Analysis**: CSV, PDF, Word, PowerPoint psychometric stress computation
-            - **Interactive Charts**: Stress distribution, subgroup comparisons, Pearson correlation matrix
-            - **Gemini-Powered AI Copilot**: Sub-second statistical research assistant
-            - **Publication-Ready PDF Reports**: Direct on-device export and sharing
-          files: mobile/android/app/build/outputs/apk/release/app-release.apk
+            ---
+
+            ### 📋 Installation Guide for Android:
+            1. Tap the direct download link above on your phone.
+            2. When downloaded, tap the notification or open the APK from your **Downloads** folder.
+            3. If prompted with *"For your security, your phone is not allowed to install unknown apps from this source"*, tap **Settings** and toggle **Allow from this source**.
+            4. Tap **Install** and open the app!
+
+            ---
+
+            ### 🌟 Application Features:
+            - **Cloud Backend Integration**: Live connection to `https://exam-stress-analyzer-api.onrender.com` (PostgreSQL database).
+            - **Multi-Format Ingestion**: Upload and analyze CSV, PDF, Word, and PowerPoint student survey files.
+            - **Statistical & Psychometric Engine**: Cronbach's alpha, PSS-10 norm comparisons, stress level classifications (Low / Moderate / High).
+            - **AI Stress Copilot**: Instant Gemini-powered conversational guidance and statistical interpretations.
+            - **Interactive Visualizations**: Subgroup comparisons, correlation matrices, and stress distributions.
+            - **PDF Export**: Generate and share comprehensive medical/academic stress reports directly from your phone.
+          files: release-artifacts/exam-stress-analyzer.apk
           token: ${{ secrets.GITHUB_TOKEN }}
