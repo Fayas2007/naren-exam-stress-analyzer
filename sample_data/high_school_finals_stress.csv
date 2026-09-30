@@ -1,0 +1,16 @@
+candidate_code,perceived_stress_index,daily_sleep_hours,revision_hours,subject_stream,mock_exam_score,caffeine_intake_mg,anxiety_rating
+HS-01,72,5.5,6.0,Science,68,200,7.5
+HS-02,45,7.5,4.0,Arts,82,50,4.2
+HS-03,88,4.0,8.5,Science,55,300,9.0
+HS-04,58,6.5,5.0,Commerce,74,100,5.8
+HS-05,32,8.5,3.0,Arts,89,0,3.0
+HS-06,79,5.0,7.0,Science,62,250,8.1
+HS-07,63,6.0,5.5,Commerce,71,150,6.4
+HS-08,41,7.8,3.5,Arts,85,50,3.8
+HS-09,85,4.5,9.0,Science,58,350,8.8
+HS-10,52,6.8,4.5,Commerce,77,100,5.0
+HS-11,76,5.2,6.5,Science,65,220,7.8
+HS-12,38,8.0,3.2,Arts,88,0,3.5
+HS-13,67,5.8,5.8,Commerce,70,180,6.9
+HS-14,90,4.2,9.2,Science,53,400,9.2
+HS-15,48,7.0,4.2,Commerce,79,80,4.6

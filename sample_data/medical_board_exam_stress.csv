@@ -1,0 +1,11 @@
+doctor_id,stress_level_scale,shift_rest_hours,prep_months,specialty_track,burnout_inventory_score,clinical_duty_hours
+MB-101,8.9,4.0,12,Surgery,82,65
+MB-102,6.5,6.0,8,Internal Medicine,64,50
+MB-103,4.2,7.5,6,Pediatrics,45,40
+MB-104,9.4,3.5,14,Emergency,89,70
+MB-105,5.8,6.5,9,Radiology,55,45
+MB-106,7.8,5.0,11,Obstetrics,76,60
+MB-107,3.9,8.0,5,Pathology,38,35
+MB-108,8.2,4.5,13,Anesthesiology,79,62
+MB-109,6.1,6.2,7,Psychiatry,58,45
+MB-110,4.8,7.0,6,Dermatology,48,40

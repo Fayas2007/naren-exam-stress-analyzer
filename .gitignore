@@ -1,0 +1,36 @@
+# Environment variables
+.env
+*.env
+backend/.env
+mobile/.env
+!.env.example
+!backend/.env.example
+!mobile/.env.example
+
+# Node / React Native
+node_modules/
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+
+# R
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Native builds
+android/
+ios/
+
+# Logs and OS
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# Temporary upload files
+backend/temp_uploads/
