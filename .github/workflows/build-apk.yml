@@ -42,30 +42,40 @@ jobs:
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a,armeabi-v7a/g' gradle.properties
           sed -i 's/newArchEnabled=.*/newArchEnabled=false/g' gradle.properties
 
+      - name: Create Offline JavaScript & Asset Bundle
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_API_BASE_URL: https://exam-stress-analyzer-api.onrender.com
+          NODE_ENV: production
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle --platform android --dev false --entry-file node_modules/expo-router/entry.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res/
+
       - name: Make Gradle Wrapper Executable
         working-directory: mobile/android
         run: chmod +x gradlew
 
-      - name: Build Android Release and Debug APKs with Gradle
+      - name: Build Standalone Release APK with Gradle
         working-directory: mobile/android
         run: |
-          ./gradlew assembleRelease --no-daemon --stacktrace || ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Prepare APK Artifacts
         run: |
           mkdir -p release-artifacts
-          find mobile/android/app/build/outputs/apk/ -type f -name "*.apk"
           if [ -f mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
             cp mobile/android/app/build/outputs/apk/release/app-release.apk release-artifacts/exam-stress-analyzer.apk
+            echo "Successfully created standalone Release APK."
           elif [ -f mobile/android/app/build/outputs/apk/debug/app-debug.apk ]; then
             cp mobile/android/app/build/outputs/apk/debug/app-debug.apk release-artifacts/exam-stress-analyzer.apk
+            echo "Successfully created fallback debug APK."
           fi
           ls -lh release-artifacts/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ExamStressAnalyzer-APK
+          name: ExamStressAnalyzer-Standalone-Release-APK
           path: release-artifacts/exam-stress-analyzer.apk
 
       - name: Create / Update GitHub Release
@@ -76,23 +86,24 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            ## 📱 Exam Stress Analyzer - Android Release APK v1.0.0
+            ## 📱 Exam Stress Analyzer - Standalone Android APK v1.0.0
 
             ### 🚀 Direct Download & Install
-            Click below to download the standalone Release APK directly onto your Android device:
+            Click below to download the 100% standalone APK (with offline bundled JS assets) directly onto your Android device:
             - 📥 **[exam-stress-analyzer.apk](https://github.com/Fayas2007/naren-exam-stress-analyzer/releases/download/v1.0.0/exam-stress-analyzer.apk)**
 
             ---
 
-            ### 📋 Steps to solve "App not installed":
-            1. **Uninstall any previous version**: If you previously had Expo Go or a draft version of this app installed on your phone, **uninstall it first**. Android blocks installing over an existing app with a different signature.
-            2. **Allow Installation**: Go to **Settings > Security / Privacy > Install unknown apps** and enable permission for your browser or file manager.
-            3. **Complete Download**: Ensure the full APK file finish downloading completely before opening it.
-            4. Tap **Install** and open the app!
+            ### 📋 Installation Guide:
+            1. **Uninstall Previous Draft**: If you have an earlier installed version or Expo Go on your mobile device, **uninstall it first**.
+            2. **Download & Open**: Tap the download link above and open `exam-stress-analyzer.apk` from your Downloads folder.
+            3. **Allow Installation**: If prompted, allow installation from unknown sources.
+            4. Tap **Install** and enjoy the app!
 
             ---
 
             ### 🌟 Application Features:
+            - **100% Standalone Offline Bundled**: No Metro dev server or PC connection required.
             - **Cloud Backend Integration**: Live connection to `https://exam-stress-analyzer-api.onrender.com` (Neon PostgreSQL database).
             - **Multi-Format Ingestion**: Upload and analyze CSV, PDF, Word, and PowerPoint student survey files.
             - **Statistical & Psychometric Engine**: Cronbach's alpha, PSS-10 norm comparisons, stress level classifications.
