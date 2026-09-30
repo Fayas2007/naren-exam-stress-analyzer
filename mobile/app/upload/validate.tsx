@@ -20,6 +20,7 @@ import Button from '../../src/components/Button';
 import Input from '../../src/components/Input';
 import LoadingView from '../../src/components/LoadingView';
 import ErrorView from '../../src/components/ErrorView';
+import ErrorBoundary from '../../src/components/ErrorBoundary';
 import { getDatasetSession } from '../../src/utils/datasetSession';
 
 // Helper function to parse CSV lines respecting quotes safely
@@ -247,6 +248,81 @@ function computeClientValidation(
   };
 }
 
+function normalizeValidationData(data: any, fallbackDatasetId: string = ''): ValidationResponse {
+  if (!data || typeof data !== 'object') {
+    return {
+      dataset_id: fallbackDatasetId,
+      is_valid: false,
+      errors: ['No validation data received.'],
+      warnings: [],
+      total_rows: 0,
+      valid_rows: 0,
+      excluded_rows: 0,
+      duplicate_rows: 0,
+      data_quality_score: 0,
+      column_quality: {},
+    };
+  }
+
+  // Safe warnings: ensure Array<string>
+  let safeWarnings: string[] = [];
+  if (Array.isArray(data.warnings)) {
+    safeWarnings = data.warnings.filter(Boolean).map((w: any) => String(w));
+  } else if (typeof data.warnings === 'string' && data.warnings.trim().length > 0) {
+    safeWarnings = [data.warnings.trim()];
+  }
+
+  // Safe errors: ensure Array<string>
+  let safeErrors: string[] = [];
+  if (Array.isArray(data.errors)) {
+    safeErrors = data.errors.filter(Boolean).map((e: any) => String(e));
+  } else if (typeof data.errors === 'string' && data.errors.trim().length > 0) {
+    safeErrors = [data.errors.trim()];
+  }
+
+  // Safe column quality: ensure dictionary with validated fields
+  const safeColumnQuality: Record<string, {
+    original_column: string;
+    mapped_field: string;
+    total_count: number;
+    missing_count: number;
+    missing_percentage: number;
+  }> = {};
+
+  if (data.column_quality && typeof data.column_quality === 'object' && !Array.isArray(data.column_quality)) {
+    for (const [key, val] of Object.entries(data.column_quality)) {
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        safeColumnQuality[key] = {
+          original_column: (val as any).original_column ? String((val as any).original_column) : key,
+          mapped_field: (val as any).mapped_field ? String((val as any).mapped_field) : key,
+          total_count: Number((val as any).total_count) || 0,
+          missing_count: Number((val as any).missing_count) || 0,
+          missing_percentage: Number((val as any).missing_percentage) || 0,
+        };
+      }
+    }
+  }
+
+  return {
+    dataset_id: data.dataset_id ? String(data.dataset_id) : fallbackDatasetId,
+    is_valid: Boolean(data.is_valid),
+    errors: safeErrors,
+    warnings: safeWarnings,
+    total_rows: Number(data.total_rows) || 0,
+    valid_rows: Number(data.valid_rows) || 0,
+    excluded_rows: Number(data.excluded_rows) || 0,
+    duplicate_rows: Number(data.duplicate_rows) || 0,
+    data_quality_score: typeof data.data_quality_score === 'number' ? data.data_quality_score : Number(data.data_quality_score) || 0,
+    column_quality: safeColumnQuality,
+    stress_range: {
+      min: Number(data.stress_range?.min) || 0,
+      max: Number(data.stress_range?.max) || 0,
+    },
+    scoring_method: data.scoring_method ? String(data.scoring_method) : undefined,
+    missing_handling_method: data.missing_handling_method ? String(data.missing_handling_method) : undefined,
+  };
+}
+
 export default function ValidateScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -309,7 +385,7 @@ export default function ValidateScreen() {
         scoringMethod,
         datasetId
       );
-      setValidationData(localResult);
+      setValidationData(normalizeValidationData(localResult, datasetId));
       setLoading(false);
     } else if (!validationData) {
       setLoading(true);
@@ -324,8 +400,8 @@ export default function ValidateScreen() {
         scoring_method: scoringMethod,
         csv_text: csvText,
       });
-      if (res && res.is_valid !== undefined) {
-        setValidationData(res);
+      if (res && typeof res === 'object') {
+        setValidationData(normalizeValidationData(res, datasetId));
       }
     } catch (err: any) {
       // If client validation is already active, keep local results intact smoothly
@@ -386,7 +462,12 @@ export default function ValidateScreen() {
     score >= 80 ? Colors.success : score >= 60 ? Colors.warning : Colors.error;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ErrorBoundary
+      fallbackTitle="Validation Display Notice"
+      fallbackMessage="An unexpected issue occurred while rendering the dataset validation view. Tap below to reload the validation parameters safely."
+      onReset={runValidation}
+    >
+      <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       {/* Title Config Card */}
       <Card style={styles.titleCard}>
         <Input
@@ -498,14 +579,27 @@ export default function ValidateScreen() {
         </Card>
       )}
 
+      {/* Errors / Issues */}
+      {Array.isArray(validationData?.errors) && validationData.errors.length > 0 && (
+        <View style={[styles.warningsContainer, { backgroundColor: '#FEE2E2', borderColor: '#FCA5A5' }]}>
+          <Text style={[styles.warningsHeading, { color: '#991B1B' }]}>Validation Issues Detected:</Text>
+          {validationData.errors.map((e, idx) => (
+            <View key={idx} style={styles.warningItem}>
+              <Feather name="alert-circle" size={14} color={Colors.error} />
+              <Text style={[styles.warningText, { color: '#991B1B' }]}>{String(e)}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
       {/* Warnings / Notices */}
-      {validationData?.warnings && validationData.warnings.length > 0 && (
+      {Array.isArray(validationData?.warnings) && validationData.warnings.length > 0 && (
         <View style={styles.warningsContainer}>
           <Text style={styles.warningsHeading}>Validation Notices:</Text>
           {validationData.warnings.map((w, idx) => (
             <View key={idx} style={styles.warningItem}>
               <Feather name="alert-triangle" size={14} color={Colors.warning} />
-              <Text style={styles.warningText}>{w}</Text>
+              <Text style={styles.warningText}>{String(w)}</Text>
             </View>
           ))}
         </View>
@@ -604,6 +698,7 @@ export default function ValidateScreen() {
         style={styles.runBtn}
       />
     </ScrollView>
+    </ErrorBoundary>
   );
 }
 

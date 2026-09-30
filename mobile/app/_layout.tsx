@@ -5,13 +5,15 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from '../src/context/AuthContext';
 import Colors from '../src/constants/Colors';
+import ErrorBoundary from '../src/components/ErrorBoundary';
 
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <StatusBar style="dark" />
-        <Stack
+      <ErrorBoundary fallbackTitle="Application Error" fallbackMessage="An error occurred in the application. Tap below to reload safely.">
+        <AuthProvider>
+          <StatusBar style="dark" />
+          <Stack
           screenOptions={{
             headerStyle: {
               backgroundColor: Colors.background,
@@ -55,6 +57,7 @@ export default function RootLayout() {
           />
         </Stack>
       </AuthProvider>
-    </SafeAreaProvider>
+    </ErrorBoundary>
+  </SafeAreaProvider>
   );
 }

@@ -173,9 +173,9 @@ function(req, res) {
 
     return(list(
       dataset_id = dataset_id,
-      is_valid = val_res$is_valid,
-      errors = val_res$errors,
-      warnings = val_res$warnings,
+      is_valid = isTRUE(val_res$is_valid),
+      errors = if (is.null(val_res$errors) || length(val_res$errors) == 0) list() else as.list(val_res$errors),
+      warnings = if (is.null(val_res$warnings) || length(val_res$warnings) == 0) list() else as.list(val_res$warnings),
       total_rows = val_res$total_rows,
       valid_rows = val_res$valid_rows,
       excluded_rows = val_res$excluded_rows,
