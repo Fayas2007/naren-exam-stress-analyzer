@@ -81,10 +81,13 @@ function(req, res) {
     created_at <- db_insert$created_at[1]
 
     mean_stress <- analysis_res$descriptive_stats$stress_score$mean
+    safe_num <- if (is.null(mean_stress) || length(mean_stress) == 0 || is.na(mean_stress[1])) 0.0 else as.numeric(mean_stress[1])
+    safe_rows <- if (is.null(val_res$valid_rows) || length(val_res$valid_rows) == 0 || is.na(val_res$valid_rows[1])) 0L else as.integer(val_res$valid_rows[1])
+
     db_execute(
       "INSERT INTO analysis_metrics (analysis_id, metric_key, metric_name, metric_value, metric_category, sample_size)
        VALUES ($1, 'mean_stress', 'Mean Stress Score', $2, 'descriptive', $3)",
-      list(as.character(analysis_id), as.numeric(mean_stress), as.integer(val_res$valid_rows))
+      list(as.character(analysis_id), safe_num, safe_rows)
     )
 
     db_execute("UPDATE datasets SET status = 'analyzed', updated_at = CURRENT_TIMESTAMP WHERE id = $1", list(as.character(dataset_id)))

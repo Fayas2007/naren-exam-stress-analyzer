@@ -1,5 +1,5 @@
 // mobile/app/upload/index.tsx
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -19,16 +19,17 @@ import Colors from '../../src/constants/Colors';
 import Card from '../../src/components/Card';
 import Button from '../../src/components/Button';
 import LoadingView from '../../src/components/LoadingView';
+import { readFileAsText, readFileAsBase64 } from '../../src/utils/fileHelper';
 
-const MAPPABLE_FIELDS: { key: keyof ColumnMappingState; label: string; required: boolean; hint: string }[] = [
-  { key: 'stress_score', label: 'Stress Score / Index', required: true, hint: 'Validated score, 0-10 scale or survey aggregate' },
-  { key: 'sleep_hours', label: 'Sleep Hours', required: false, hint: 'Average daily sleep duration' },
-  { key: 'study_hours', label: 'Study / Revision Hours', required: false, hint: 'Daily study or prep time' },
-  { key: 'preparation_level', label: 'Preparation Level', required: false, hint: 'e.g. Low, Medium, High' },
-  { key: 'exam_type', label: 'Exam Type / Subject', required: false, hint: 'e.g. Finals, Midterm, Quiz, Surgery' },
-  { key: 'anxiety_score', label: 'Anxiety Score', required: false, hint: 'GAD-7 or numeric rating' },
-  { key: 'caffeine_intake', label: 'Caffeine Intake', required: false, hint: 'Cups of coffee or mg/day' },
-  { key: 'physical_activity_hours', label: 'Physical Activity', required: false, hint: 'Weekly/daily exercise hours' },
+const MAPPABLE_FIELDS: { key: keyof ColumnMappingState; label: string; icon: string; required: boolean; hint: string }[] = [
+  { key: 'stress_score', label: 'Stress Score / Level', icon: 'activity', required: true, hint: 'Validated stress rating or scale' },
+  { key: 'sleep_hours', label: 'Sleep Hours', icon: 'moon', required: false, hint: 'Daily sleep duration' },
+  { key: 'study_hours', label: 'Study Hours', icon: 'book-open', required: false, hint: 'Daily study or revision time' },
+  { key: 'physical_activity_hours', label: 'Physical Activity', icon: 'zap', required: false, hint: 'Exercise or activity hours' },
+  { key: 'preparation_level', label: 'Preparation Level', icon: 'award', required: false, hint: 'e.g. Low, Medium, High' },
+  { key: 'anxiety_score', label: 'Anxiety Score', icon: 'alert-circle', required: false, hint: 'GAD-7 or anxiety rating' },
+  { key: 'caffeine_intake', label: 'Caffeine Intake', icon: 'coffee', required: false, hint: 'Coffee cups or mg/day' },
+  { key: 'exam_type', label: 'Exam Type / Subject', icon: 'file-text', required: false, hint: 'e.g. Finals, Midterm' },
 ];
 
 // Sample dataset text for instant demo & testing
@@ -52,19 +53,153 @@ S116,4.0,7.8,4.0,High,Midterm,3.7,2.0,1
 S117,5.8,6.2,6.0,Medium,Midterm,5.5,1.2,2
 S118,9.2,4.0,11.0,Low,Finals,9.5,0.0,5
 S119,6.4,6.2,6.0,Medium,Midterm,6.1,1.5,2
-S120,3.8,8.0,3.8,High,Quiz,3.5,2.5,0
-S121,8.1,5.2,8.2,Low,Finals,8.3,0.5,4
-S122,5.9,6.8,5.8,Medium,Midterm,5.4,1.8,2
-S123,4.3,7.2,4.2,High,Quiz,4.0,2.2,1
-S124,8.9,4.2,9.8,Low,Finals,9.0,0.0,5
-S125,7.1,5.8,6.8,Medium,Finals,6.9,0.8,3
-S126,3.2,8.2,3.2,High,Midterm,3.0,2.8,0
-S127,5.3,6.8,5.2,Medium,Midterm,5.0,1.5,2
-S128,8.5,4.8,9.0,Low,Finals,8.6,0.5,4
-S129,6.8,6.0,6.7,Medium,Midterm,6.4,1.0,3
-S130,4.8,7.4,4.6,High,Quiz,4.4,2.0,1`;
+S120,3.8,8.0,3.8,High,Quiz,3.5,2.5,0`;
 
-import { readFileAsText, readFileAsBase64 } from '../../src/utils/fileHelper';
+// Robust CSV parser to extract all rows
+function parseCsvRows(csvText: string, maxRows = 2000): { headers: string[]; rows: Record<string, string>[] } {
+  if (!csvText || !csvText.trim()) return { headers: [], rows: [] };
+  const lines = csvText.trim().split(/\r?\n/);
+  if (lines.length < 2) return { headers: [], rows: [] };
+
+  const parseLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"' || char === "'") {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseLine(lines[0]);
+  const rows: Record<string, string>[] = [];
+  const limit = Math.min(lines.length, maxRows + 1);
+
+  for (let i = 1; i < limit; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const values = parseLine(line);
+    const rowObj: Record<string, string> = {};
+    headers.forEach((h, idx) => {
+      rowObj[h] = values[idx] !== undefined ? values[idx] : '';
+    });
+    rows.push(rowObj);
+  }
+
+  return { headers, rows };
+}
+
+// Intelligent auto-detection of survey columns
+function autoDetectMappings(columns: string[]): ColumnMappingState {
+  const result: ColumnMappingState = { stress_score: '' };
+  const lowerCols = columns.map((c) => ({
+    original: c,
+    clean: c.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+  }));
+
+  const findMatch = (patterns: RegExp[]): string => {
+    for (const pat of patterns) {
+      const found = lowerCols.find((c) => pat.test(c.clean));
+      if (found) return found.original;
+    }
+    return '';
+  };
+
+  // 1. Stress Score / Index (Required)
+  result.stress_score = findMatch([
+    /^stress_score$/,
+    /^stress_level$/,
+    /stress.*score/,
+    /stress.*level/,
+    /perceived_stress/,
+    /^stress$/,
+    /stress/,
+    /pss/,
+    /burnout/,
+    /tension/,
+  ]);
+
+  // Fallback if not found: search for rating or score column
+  if (!result.stress_score) {
+    result.stress_score = findMatch([/score/, /rating/, /metric/]);
+  }
+
+  // 2. Sleep Hours
+  result.sleep_hours = findMatch([
+    /^sleep_hours/,
+    /sleep.*hour/,
+    /sleep.*duration/,
+    /^sleep$/,
+    /bedtime/,
+    /rest.*hour/,
+  ]);
+
+  // 3. Study Hours
+  result.study_hours = findMatch([
+    /^study_hours/,
+    /study.*hour/,
+    /study.*per.*day/,
+    /revision.*hour/,
+    /^study$/,
+    /prep.*hour/,
+    /homework/,
+  ]);
+
+  // 4. Physical Activity
+  result.physical_activity_hours = findMatch([
+    /physical.*activity/,
+    /exercise.*hour/,
+    /sport.*hour/,
+    /workout/,
+    /fitness/,
+    /physical/,
+  ]);
+
+  // 5. Preparation Level
+  result.preparation_level = findMatch([
+    /prep.*level/,
+    /preparation/,
+    /readiness/,
+    /exam.*prep/,
+  ]);
+
+  // 6. Anxiety Score
+  result.anxiety_score = findMatch([
+    /^anxiety_score/,
+    /anxiety/,
+    /gad_?7/,
+    /nervousness/,
+  ]);
+
+  // 7. Caffeine Intake
+  result.caffeine_intake = findMatch([
+    /caffeine/,
+    /coffee/,
+    /energy.*drink/,
+    /tea/,
+  ]);
+
+  // 8. Exam Type
+  result.exam_type = findMatch([
+    /exam.*type/,
+    /exam/,
+    /test_type/,
+    /subject/,
+    /semester/,
+    /course/,
+  ]);
+
+  return result;
+}
 
 export default function UploadScreen() {
   const router = useRouter();
@@ -76,6 +211,24 @@ export default function UploadScreen() {
   });
   const [rawCsvText, setRawCsvText] = useState<string>('');
   const [fileType, setFileType] = useState<string>('csv');
+  const [showManualMapping, setShowManualMapping] = useState<boolean>(false);
+
+  // Extract full preview rows from client-side text or backend preview
+  const parsedTable = useMemo(() => {
+    if (rawCsvText) {
+      const parsed = parseCsvRows(rawCsvText, 2000);
+      if (parsed.rows.length > 0) {
+        return parsed;
+      }
+    }
+    if (uploadResult) {
+      return {
+        headers: Object.keys(uploadResult.columns),
+        rows: uploadResult.preview_rows as Record<string, string>[],
+      };
+    }
+    return { headers: [], rows: [] };
+  }, [rawCsvText, uploadResult]);
 
   const handlePickDocument = async () => {
     try {
@@ -129,14 +282,13 @@ export default function UploadScreen() {
       });
 
       setUploadResult(res);
-      initSuggestedMappings(res);
+      applySmartMappings(res);
     } catch (err: any) {
       Alert.alert('Upload Error', err.message || 'Failed to parse document.');
     } finally {
       setLoading(false);
     }
   };
-
 
   const handleLoadSampleDataset = async () => {
     setLoading(true);
@@ -145,7 +297,7 @@ export default function UploadScreen() {
       setFileType('csv');
       const res = await datasetApi.uploadCsvText(SAMPLE_CSV_DATA, 'student_exam_stress_sample.csv');
       setUploadResult(res);
-      initSuggestedMappings(res);
+      applySmartMappings(res);
     } catch (err: any) {
       Alert.alert('Error', err.message || 'Failed to load sample dataset.');
     } finally {
@@ -153,14 +305,19 @@ export default function UploadScreen() {
     }
   };
 
-  const initSuggestedMappings = (data: UploadResponse) => {
-    const initial: ColumnMappingState = { stress_score: '' };
+  // Automated smart detection of all columns
+  const applySmartMappings = (data: UploadResponse) => {
+    const colNames = Object.keys(data.columns);
+    const autoMapped = autoDetectMappings(colNames);
+
+    // Merge backend suggestions if any
     for (const [colName, colInfo] of Object.entries(data.columns)) {
-      if (colInfo.suggested_mapping) {
-        (initial as any)[colInfo.suggested_mapping] = colName;
+      if (colInfo.suggested_mapping && !(autoMapped as any)[colInfo.suggested_mapping]) {
+        (autoMapped as any)[colInfo.suggested_mapping] = colName;
       }
     }
-    setColumnMappings(initial);
+
+    setColumnMappings(autoMapped);
   };
 
   const handleSelectColumnForField = (fieldKey: keyof ColumnMappingState, colName: string) => {
@@ -173,9 +330,10 @@ export default function UploadScreen() {
   const handleProceedToValidation = () => {
     if (!columnMappings.stress_score) {
       Alert.alert(
-        'Required Field Missing',
-        'Please map a column to the required "Stress Score / Index" field before proceeding.'
+        'Stress Metric Required',
+        'Could not auto-detect the Stress Score/Level column. Please select a column to represent Stress before validating.'
       );
+      setShowManualMapping(true);
       return;
     }
 
@@ -194,10 +352,11 @@ export default function UploadScreen() {
   };
 
   if (loading) {
-    return <LoadingView message="Parsing and validating CSV headers..." />;
+    return <LoadingView message="Parsing and analyzing dataset..." />;
   }
 
   const columnNames = uploadResult ? Object.keys(uploadResult.columns) : [];
+  const mappedCount = Object.values(columnMappings).filter(Boolean).length;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
@@ -214,21 +373,11 @@ export default function UploadScreen() {
             </Text>
 
             <View style={{ flexDirection: 'row', gap: 6, justifyContent: 'center', marginBottom: 18 }}>
-              <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
-                <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700' }}>PDF</Text>
-              </View>
-              <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
-                <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700' }}>DOCX</Text>
-              </View>
-              <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
-                <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700' }}>PPTX</Text>
-              </View>
-              <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
-                <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700' }}>CSV</Text>
-              </View>
-              <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
-                <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700' }}>XLSX</Text>
-              </View>
+              {['PDF', 'DOCX', 'PPTX', 'CSV', 'XLSX'].map((fmt) => (
+                <View key={fmt} style={styles.badgeFormat}>
+                  <Text style={styles.badgeFormatText}>{fmt}</Text>
+                </View>
+              ))}
             </View>
 
             <Button
@@ -258,14 +407,14 @@ export default function UploadScreen() {
           </Card>
 
           <Card style={styles.guidelineCard}>
-            <Text style={styles.guideTitle}>Document & Dataset Guidelines:</Text>
-            <Text style={styles.guideItem}>• Multi-format: Upload CSV data, survey summaries in PDF, Word reports, or slides.</Text>
-            <Text style={styles.guideItem}>• The statistical engine extracts stress indices, sleep, study time, and preparation factors.</Text>
-            <Text style={styles.guideItem}>• All metrics are stored securely and analyzed using native R statistical modeling.</Text>
+            <Text style={styles.guideTitle}>Automated Processing Features:</Text>
+            <Text style={styles.guideItem}>• Intelligent auto-detection of all psychological and lifestyle metrics.</Text>
+            <Text style={styles.guideItem}>• Instant full dataset preview with smooth vertical and horizontal inspection.</Text>
+            <Text style={styles.guideItem}>• Multi-format ingestion with high-speed statistical validation.</Text>
           </Card>
         </View>
       ) : (
-        // Mapping & Preview View
+        // Mapping & Full Preview View
         <View style={styles.mappingSection}>
           {/* File Info Card */}
           <Card style={styles.fileInfoCard}>
@@ -273,7 +422,7 @@ export default function UploadScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.fileName}>{uploadResult.filename}</Text>
                 <Text style={styles.fileStats}>
-                  {uploadResult.total_rows} rows • {uploadResult.total_columns} columns •{' '}
+                  {parsedTable.rows.length || uploadResult.total_rows} rows • {uploadResult.total_columns} columns •{' '}
                   {(uploadResult.file_size_bytes / 1024).toFixed(1)} KB
                 </Text>
               </View>
@@ -286,112 +435,192 @@ export default function UploadScreen() {
             </View>
           </Card>
 
-          {/* Column Mapping Section */}
-          <Text style={styles.sectionHeading}>1. Map Survey Columns</Text>
-          <Text style={styles.sectionSubtitle}>
-            Match your CSV headers to the supported analytical dimensions.
-          </Text>
+          {/* 1. AUTOMATED SMART MAPPING CARD */}
+          <Card style={styles.smartMappingCard}>
+            <View style={styles.smartMappingHeader}>
+              <View style={styles.smartTitleRow}>
+                <View style={styles.sparkleIconCircle}>
+                  <Feather name="cpu" size={18} color={Colors.primary} />
+                </View>
+                <View>
+                  <Text style={styles.smartTitle}>Automated Column Mapping</Text>
+                  <Text style={styles.smartSub}>
+                    {mappedCount} dimensions automatically recognized
+                  </Text>
+                </View>
+              </View>
 
-          <View style={styles.fieldsList}>
-            {MAPPABLE_FIELDS.map((f) => {
-              const currentMapped = columnMappings[f.key];
+              <View style={styles.autoMappedBadge}>
+                <Feather name="check" size={12} color="#059669" />
+                <Text style={styles.autoMappedBadgeText}>Auto-Mapped</Text>
+              </View>
+            </View>
 
-              return (
-                <Card key={f.key} style={styles.fieldCard}>
-                  <View style={styles.fieldHeader}>
-                    <View style={styles.fieldNameRow}>
-                      <Text style={styles.fieldLabel}>{f.label}</Text>
-                      {f.required ? (
-                        <View style={styles.requiredBadge}>
-                          <Text style={styles.requiredText}>Required</Text>
-                        </View>
-                      ) : (
-                        <Text style={styles.optionalText}>Optional</Text>
-                      )}
-                    </View>
-                    <Text style={styles.fieldHint}>{f.hint}</Text>
+            {/* Compact summary of auto-mapped fields */}
+            <View style={styles.autoMappedGrid}>
+              {MAPPABLE_FIELDS.filter((f) => columnMappings[f.key]).map((f) => (
+                <View key={f.key} style={styles.autoMappedItem}>
+                  <View style={styles.autoMappedIconCircle}>
+                    <Feather name={f.icon as any} size={14} color={Colors.primary} />
                   </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.autoMappedLabel}>
+                      {f.label}{' '}
+                      {f.required && <Text style={{ color: Colors.error, fontSize: 10 }}>*</Text>}
+                    </Text>
+                    <Text style={styles.autoMappedColumnName} numberOfLines={1}>
+                      {columnMappings[f.key]}
+                    </Text>
+                  </View>
+                  <Feather name="check-circle" size={14} color="#10B981" />
+                </View>
+              ))}
+            </View>
 
-                  {/* Column Chips Selector */}
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.columnChipsScroll}
-                  >
-                    {columnNames.map((colName) => {
-                      const isSelected = currentMapped === colName;
-                      const colType = uploadResult.columns[colName]?.type;
+            {/* Toggle to optionally customize/adjust */}
+            <TouchableOpacity
+              style={styles.adjustToggleBtn}
+              onPress={() => setShowManualMapping(!showManualMapping)}
+            >
+              <Feather
+                name={showManualMapping ? 'chevron-up' : 'sliders'}
+                size={14}
+                color={Colors.primary}
+              />
+              <Text style={styles.adjustToggleText}>
+                {showManualMapping ? 'Hide Custom Column Mapping' : 'Adjust Mappings Manually (Optional)'}
+              </Text>
+            </TouchableOpacity>
 
-                      return (
-                        <TouchableOpacity
-                          key={colName}
-                          style={[
-                            styles.columnChip,
-                            isSelected && styles.columnChipSelected,
-                          ]}
-                          onPress={() => handleSelectColumnForField(f.key, colName)}
-                        >
-                          {isSelected && (
-                            <Feather
-                              name="check"
-                              size={12}
-                              color={Colors.white}
-                              style={{ marginRight: 4 }}
-                            />
-                          )}
-                          <Text
-                            style={[
-                              styles.chipColName,
-                              isSelected && styles.chipColNameSelected,
-                            ]}
-                          >
-                            {colName}
-                          </Text>
-                          <Text
-                            style={[
-                              styles.chipColType,
-                              isSelected && styles.chipColTypeSelected,
-                            ]}
-                          >
-                            ({colType})
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-                </Card>
-              );
-            })}
+            {/* Expanded manual selector if user wants to change anything */}
+            {showManualMapping && (
+              <View style={styles.manualFieldsContainer}>
+                {MAPPABLE_FIELDS.map((f) => {
+                  const currentMapped = columnMappings[f.key];
+
+                  return (
+                    <View key={f.key} style={styles.manualFieldRow}>
+                      <View style={styles.manualFieldLabelCol}>
+                        <Text style={styles.manualFieldLabel}>{f.label}</Text>
+                        <Text style={styles.manualFieldHint}>{f.hint}</Text>
+                      </View>
+
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.columnChipsScroll}
+                      >
+                        {columnNames.map((colName) => {
+                          const isSelected = currentMapped === colName;
+                          return (
+                            <TouchableOpacity
+                              key={colName}
+                              style={[
+                                styles.columnChip,
+                                isSelected && styles.columnChipSelected,
+                              ]}
+                              onPress={() => handleSelectColumnForField(f.key, colName)}
+                            >
+                              {isSelected && (
+                                <Feather
+                                  name="check"
+                                  size={11}
+                                  color={Colors.white}
+                                  style={{ marginRight: 3 }}
+                                />
+                              )}
+                              <Text
+                                style={[
+                                  styles.chipColName,
+                                  isSelected && styles.chipColNameSelected,
+                                ]}
+                              >
+                                {colName}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </Card>
+
+          {/* 2. FULL SCROLLABLE CSV DATA PREVIEW */}
+          <View style={styles.previewSectionHeader}>
+            <View>
+              <Text style={styles.sectionHeading}>
+                2. CSV Data Preview ({parsedTable.rows.length} Records)
+              </Text>
+              <Text style={styles.sectionSubtitle}>
+                Scroll down through records and across columns to inspect the full data.
+              </Text>
+            </View>
+            <View style={styles.rowCountBadge}>
+              <Text style={styles.rowCountText}>{parsedTable.rows.length} Rows</Text>
+            </View>
           </View>
 
-          {/* Preview Table */}
-          <Text style={styles.sectionHeading}>2. CSV Data Preview (First 5 Rows)</Text>
           <Card style={styles.previewTableCard}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={true}>
-              <View>
-                {/* Table Header */}
-                <View style={styles.tableHeaderRow}>
-                  {columnNames.map((col) => (
-                    <View key={col} style={styles.tableHeaderCell}>
-                      <Text style={styles.tableHeaderText}>{col}</Text>
+            {/* Double ScrollView: Vertical Scroll + Horizontal Scroll */}
+            <ScrollView
+              style={styles.verticalTableScroll}
+              nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+            >
+              <ScrollView
+                horizontal
+                nestedScrollEnabled={true}
+                showsHorizontalScrollIndicator={true}
+              >
+                <View>
+                  {/* Table Header */}
+                  <View style={styles.tableHeaderRow}>
+                    <View style={styles.tableIndexHeaderCell}>
+                      <Text style={styles.tableHeaderText}>#</Text>
                     </View>
-                  ))}
-                </View>
-
-                {/* Table Rows */}
-                {uploadResult.preview_rows.map((row, rIdx) => (
-                  <View key={rIdx} style={styles.tableDataRow}>
-                    {columnNames.map((col) => (
-                      <View key={col} style={styles.tableDataCell}>
-                        <Text style={styles.tableCellText} numberOfLines={1}>
-                          {row[col] !== undefined && row[col] !== null ? String(row[col]) : '—'}
+                    {parsedTable.headers.map((col) => (
+                      <View key={col} style={styles.tableHeaderCell}>
+                        <Text style={styles.tableHeaderText} numberOfLines={1}>
+                          {col}
                         </Text>
                       </View>
                     ))}
                   </View>
-                ))}
-              </View>
+
+                  {/* Scrollable Data Rows */}
+                  {parsedTable.rows.map((row, rIdx) => (
+                    <View
+                      key={rIdx}
+                      style={[
+                        styles.tableDataRow,
+                        rIdx % 2 === 1 && styles.tableDataRowAlt,
+                      ]}
+                    >
+                      <View style={styles.tableIndexCell}>
+                        <Text style={styles.tableIndexText}>{rIdx + 1}</Text>
+                      </View>
+                      {parsedTable.headers.map((col) => (
+                        <View key={col} style={styles.tableDataCell}>
+                          <Text style={styles.tableCellText} numberOfLines={1}>
+                            {row[col] !== undefined && row[col] !== null ? String(row[col]) : '—'}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
             </ScrollView>
+
+            <View style={styles.tableFooterBar}>
+              <Feather name="info" size={13} color={Colors.textMuted} />
+              <Text style={styles.tableFooterText}>
+                Showing all {parsedTable.rows.length} records. Scroll up/down to explore.
+              </Text>
+            </View>
           </Card>
 
           {/* Action Button */}
@@ -447,8 +676,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textSecondary,
     marginTop: 4,
-    marginBottom: 20,
+    marginBottom: 18,
     textAlign: 'center',
+    lineHeight: 18,
+  },
+  badgeFormat: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeFormatText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '700',
   },
   pickBtn: {
     marginVertical: 6,
@@ -483,7 +724,7 @@ const styles = StyleSheet.create({
   guideItem: {
     fontSize: 13,
     color: Colors.textSecondary,
-    marginBottom: 4,
+    marginBottom: 5,
     lineHeight: 18,
   },
   mappingSection: {
@@ -491,7 +732,7 @@ const styles = StyleSheet.create({
   },
   fileInfoCard: {
     padding: 14,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   fileHeader: {
     flexDirection: 'row',
@@ -509,7 +750,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   changeFileBtn: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     backgroundColor: Colors.backgroundSecondary,
@@ -521,130 +762,278 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontWeight: '600',
   },
-  sectionHeading: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-    marginTop: 8,
-    marginBottom: 2,
-  },
-  sectionSubtitle: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    marginBottom: 14,
-  },
-  fieldsList: {
-    gap: 12,
+
+  /* Smart Auto-Mapping Styles */
+  smartMappingCard: {
+    padding: 16,
     marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
   },
-  fieldCard: {
-    padding: 14,
-  },
-  fieldHeader: {
-    marginBottom: 10,
-  },
-  fieldNameRow: {
+  smartMappingHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
+    marginBottom: 14,
   },
-  fieldLabel: {
-    fontSize: 14,
+  smartTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  sparkleIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  smartTitle: {
+    fontSize: 15,
     fontWeight: '700',
     color: Colors.text,
   },
-  requiredBadge: {
-    backgroundColor: Colors.errorLight,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  requiredText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.error,
-  },
-  optionalText: {
-    fontSize: 11,
-    color: Colors.textMuted,
-  },
-  fieldHint: {
+  smartSub: {
     fontSize: 12,
     color: Colors.textSecondary,
-    marginTop: 2,
+    marginTop: 1,
   },
-  columnChipsScroll: {
+  autoMappedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  autoMappedBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  autoMappedGrid: {
     gap: 8,
+    marginBottom: 12,
+  },
+  autoMappedItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  autoMappedIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  autoMappedLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  autoMappedColumnName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text,
+    marginTop: 1,
+  },
+  adjustToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  adjustToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  manualFieldsContainer: {
+    marginTop: 12,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingTop: 12,
+  },
+  manualFieldRow: {
+    gap: 6,
+  },
+  manualFieldLabelCol: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  manualFieldLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  manualFieldHint: {
+    fontSize: 10,
+    color: Colors.textMuted,
+  },
+
+  /* Chips */
+  columnChipsScroll: {
+    gap: 6,
     paddingVertical: 2,
   },
   columnChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: Colors.backgroundSecondary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: '#CBD5E1',
   },
   columnChipSelected: {
     backgroundColor: Colors.primary,
     borderColor: Colors.primary,
   },
   chipColName: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: Colors.text,
   },
   chipColNameSelected: {
     color: Colors.white,
   },
-  chipColType: {
-    fontSize: 10,
-    color: Colors.textMuted,
-    marginLeft: 4,
+
+  /* Preview Section */
+  previewSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
-  chipColTypeSelected: {
-    color: '#DBEAFE',
+  sectionHeading: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  rowCountBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  rowCountText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
   },
   previewTableCard: {
     padding: 0,
-    marginBottom: 24,
+    marginBottom: 20,
     overflow: 'hidden',
+    borderColor: '#CBD5E1',
+  },
+  verticalTableScroll: {
+    maxHeight: 380,
   },
   tableHeaderRow: {
     flexDirection: 'row',
-    backgroundColor: Colors.backgroundSecondary,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    backgroundColor: '#F1F5F9',
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#CBD5E1',
+  },
+  tableIndexHeaderCell: {
+    width: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderRightWidth: 1,
+    borderRightColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2E8F0',
   },
   tableHeaderCell: {
-    width: 120,
-    padding: 10,
+    width: 140,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
     borderRightWidth: 1,
-    borderRightColor: Colors.border,
+    borderRightColor: '#CBD5E1',
+    justifyContent: 'center',
   },
   tableHeaderText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: Colors.text,
   },
   tableDataRow: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+  },
+  tableDataRowAlt: {
+    backgroundColor: '#F8FAFC',
+  },
+  tableIndexCell: {
+    width: 44,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRightWidth: 1,
+    borderRightColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  tableIndexText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: Colors.textMuted,
   },
   tableDataCell: {
-    width: 120,
-    padding: 10,
+    width: 140,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     borderRightWidth: 1,
-    borderRightColor: Colors.borderLight,
+    borderRightColor: '#F1F5F9',
+    justifyContent: 'center',
   },
   tableCellText: {
     fontSize: 12,
-    color: Colors.textSecondary,
+    color: Colors.text,
+  },
+  tableFooterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  tableFooterText: {
+    fontSize: 11,
+    color: Colors.textMuted,
   },
   proceedBtn: {
-    marginTop: 8,
+    marginTop: 6,
   },
 });

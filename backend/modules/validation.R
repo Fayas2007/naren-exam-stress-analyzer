@@ -5,6 +5,8 @@ validate_dataset_mapping <- function(df, column_mappings, missing_handling = "ex
   # column_mappings is a named list e.g. list(stress_score = "perceived_stress", sleep_hours = "daily_sleep_hours")
   errors <- c()
   warnings <- c()
+  total_r <- as.integer(nrow(df))
+  duplicate_count <- as.integer(sum(duplicated(df)))
 
   # 1. Check required mapping: stress_score
   stress_col <- column_mappings$stress_score
@@ -19,31 +21,63 @@ validate_dataset_mapping <- function(df, column_mappings, missing_handling = "ex
       is_valid = FALSE,
       errors = errors,
       warnings = warnings,
-      total_rows = nrow(df),
-      valid_rows = 0,
-      excluded_rows = nrow(df)
+      total_rows = total_r,
+      valid_rows = 0L,
+      excluded_rows = total_r,
+      duplicate_rows = duplicate_count,
+      data_quality_score = 0,
+      missing_handling_applied = missing_handling,
+      scoring_method = scoring_method,
+      stress_range = list(min = 0, max = 0),
+      column_quality = list(),
+      mapped_fields = list(),
+      clean_data = data.frame()
     ))
   }
 
   # 2. Extract and inspect stress_score column
   raw_stress <- df[[stress_col]]
   num_stress <- suppressWarnings(as.numeric(raw_stress))
-  invalid_stress_count <- sum(is.na(num_stress) & !is.na(raw_stress) & raw_stress != "")
 
+  # If direct numeric conversion fails completely, check for categorical stress labels (e.g. Low/Moderate/High)
+  missing_stress_count <- sum(is.na(num_stress))
+  if (missing_stress_count == total_r) {
+    clean_str <- tolower(trimws(as.character(raw_stress)))
+    is_cat <- any(grepl("low|med|mod|high|mild|sev", clean_str[!is.na(clean_str)]))
+    if (is_cat) {
+      cat_num <- rep(NA_real_, length(raw_stress))
+      cat_num[grepl("low|mild|normal|none|minimal", clean_str)] <- 2.5
+      cat_num[grepl("med|mod|avg|average", clean_str)] <- 5.5
+      cat_num[grepl("high|sev|severe|extreme|critical", clean_str)] <- 8.5
+      num_stress <- cat_num
+      df[[stress_col]] <- num_stress
+      warnings <- c(warnings, paste0("Categorical stress scale detected in '", stress_col, "' (e.g., Low, Moderate, High) and normalized to numeric scores."))
+    }
+  }
+
+  invalid_stress_count <- sum(is.na(num_stress) & !is.na(raw_stress) & raw_stress != "")
   if (invalid_stress_count > 0) {
     warnings <- c(warnings, paste0(invalid_stress_count, " non-numeric value(s) in stress column '", stress_col, "' will be treated as missing."))
   }
 
   missing_stress_count <- sum(is.na(num_stress))
-  if (missing_stress_count == nrow(df)) {
+  if (missing_stress_count == total_r) {
     errors <- c(errors, paste0("The column '", stress_col, "' contains no valid numerical stress values."))
     return(list(
       is_valid = FALSE,
       errors = errors,
       warnings = warnings,
-      total_rows = nrow(df),
-      valid_rows = 0,
-      excluded_rows = nrow(df)
+      total_rows = total_r,
+      valid_rows = 0L,
+      excluded_rows = total_r,
+      duplicate_rows = duplicate_count,
+      data_quality_score = 0,
+      missing_handling_applied = missing_handling,
+      scoring_method = scoring_method,
+      stress_range = list(min = 0, max = 0),
+      column_quality = list(),
+      mapped_fields = list(),
+      clean_data = data.frame()
     ))
   }
 
@@ -69,14 +103,12 @@ validate_dataset_mapping <- function(df, column_mappings, missing_handling = "ex
   }
 
   # 4. Check Duplicate Rows
-  duplicate_count <- sum(duplicated(df))
   if (duplicate_count > 0) {
     warnings <- c(warnings, paste0("Detected ", duplicate_count, " exact duplicate row(s) in the dataset."))
   }
 
   # 5. Row Filtering according to missing_handling
-  # Create working subset of mapped columns
-  mapped_df <- data.frame(row_id = seq_len(nrow(df)))
+  mapped_df <- data.frame(row_id = seq_len(total_r))
 
   for (f in names(mapped_fields_present)) {
     col_name <- mapped_fields_present[[f]]
@@ -95,29 +127,28 @@ validate_dataset_mapping <- function(df, column_mappings, missing_handling = "ex
   if (missing_handling == "exclude_incomplete_records") {
     valid_mask <- complete.cases(mapped_df)
   } else {
-    # pairwise / stress required
     valid_mask <- !is.na(mapped_df$stress_score)
   }
 
-  valid_rows_count <- sum(valid_mask)
-  excluded_rows_count <- nrow(df) - valid_rows_count
+  valid_rows_count <- as.integer(sum(valid_mask))
+  excluded_rows_count <- as.integer(total_r - valid_rows_count)
 
   if (valid_rows_count < 3) {
     errors <- c(errors, "Dataset has fewer than 3 valid rows after filtering missing values. Statistical analysis requires at least 3 records.")
   }
 
   # 6. Overall Data Quality Score (0 - 100)
-  total_cells <- nrow(df) * length(mapped_fields_present)
+  total_cells <- total_r * length(mapped_fields_present)
   total_missing <- sum(sapply(mapped_df, function(x) sum(is.na(x))))
   completeness_ratio <- if (total_cells > 0) (1 - (total_missing / total_cells)) else 1
-  valid_row_ratio <- valid_rows_count / nrow(df)
+  valid_row_ratio <- if (total_r > 0) (valid_rows_count / total_r) else 0
 
   quality_score <- max(0, min(100, round((completeness_ratio * 0.6 + valid_row_ratio * 0.4) * 100, 1)))
 
   # 7. Stress Range Check
   valid_stress_vals <- mapped_df$stress_score[valid_mask]
-  stress_min <- min(valid_stress_vals, na.rm = TRUE)
-  stress_max <- max(valid_stress_vals, na.rm = TRUE)
+  stress_min <- if (length(valid_stress_vals) > 0) min(valid_stress_vals, na.rm = TRUE) else 0
+  stress_max <- if (length(valid_stress_vals) > 0) max(valid_stress_vals, na.rm = TRUE) else 0
 
   if (stress_min < 0) {
     warnings <- c(warnings, "Stress score column contains negative values.")
@@ -127,7 +158,7 @@ validate_dataset_mapping <- function(df, column_mappings, missing_handling = "ex
     is_valid = (length(errors) == 0),
     errors = errors,
     warnings = warnings,
-    total_rows = nrow(df),
+    total_rows = total_r,
     valid_rows = valid_rows_count,
     excluded_rows = excluded_rows_count,
     duplicate_rows = duplicate_count,

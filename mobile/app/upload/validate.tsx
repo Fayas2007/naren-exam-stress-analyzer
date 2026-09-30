@@ -21,6 +21,219 @@ import Input from '../../src/components/Input';
 import LoadingView from '../../src/components/LoadingView';
 import ErrorView from '../../src/components/ErrorView';
 
+// Helper function to parse CSV lines respecting quotes
+function parseCsv(text: string): { headers: string[]; rows: string[][] } {
+  if (!text || !text.trim()) return { headers: [], rows: [] };
+  const lines = text.trim().split(/\r\n|\n|\r/);
+  if (lines.length === 0) return { headers: [], rows: [] };
+
+  const parseLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseLine(lines[0]);
+  const rows: string[][] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const rawLine = lines[i].trim();
+    if (!rawLine) continue;
+    rows.push(parseLine(rawLine));
+  }
+  return { headers, rows };
+}
+
+function parseStressScore(val: string): number | null {
+  if (!val || val === '' || val.toLowerCase() === 'na' || val.toLowerCase() === 'null') {
+    return null;
+  }
+  const clean = val.replace(/['"]/g, '').trim().toLowerCase();
+  if (clean === 'low') return 2.5;
+  if (clean === 'moderate' || clean === 'medium') return 5.5;
+  if (clean === 'high' || clean === 'severe') return 8.5;
+  const num = parseFloat(clean);
+  return isNaN(num) ? null : num;
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  stress_score: 'Stress Score / Index',
+  sleep_hours: 'Sleep Hours',
+  study_hours: 'Study / Prep Hours',
+  physical_activity_hours: 'Physical Activity',
+  anxiety_score: 'Anxiety Score',
+  preparation_level: 'Preparation Level',
+  caffeine_intake: 'Caffeine Intake',
+  exam_type: 'Exam Type',
+};
+
+function computeClientValidation(
+  csvText: string,
+  mappings: ColumnMappingState,
+  missingHandling: string,
+  scoringMethod: string,
+  datasetId: string
+): ValidationResponse {
+  const { headers, rows } = parseCsv(csvText);
+  const totalRows = rows.length;
+
+  if (totalRows === 0) {
+    return {
+      dataset_id: datasetId,
+      is_valid: true,
+      errors: [],
+      warnings: [],
+      total_rows: 0,
+      valid_rows: 0,
+      excluded_rows: 0,
+      duplicate_rows: 0,
+      data_quality_score: 100,
+      column_quality: {},
+      scoring_method: scoringMethod,
+      missing_handling_method: missingHandling,
+    };
+  }
+
+  // Map fields to header column indices
+  const colIndices: Record<string, { index: number; colName: string }> = {};
+  for (const [fieldKey, colName] of Object.entries(mappings)) {
+    if (!colName) continue;
+    const idx = headers.findIndex(
+      (h) => h.trim().toLowerCase() === (colName as string).trim().toLowerCase()
+    );
+    if (idx !== -1) {
+      colIndices[fieldKey] = { index: idx, colName: colName as string };
+    }
+  }
+
+  // Count duplicates
+  const seenSignatures = new Set<string>();
+  let duplicateRows = 0;
+  for (const row of rows) {
+    const sig = row.join('|||');
+    if (seenSignatures.has(sig)) {
+      duplicateRows++;
+    } else {
+      seenSignatures.add(sig);
+    }
+  }
+
+  // Calculate missing counts per column
+  const columnQuality: ValidationResponse['column_quality'] = {};
+  let totalMissingAcrossMapped = 0;
+
+  for (const [fieldKey, info] of Object.entries(colIndices)) {
+    let missingCount = 0;
+    for (const row of rows) {
+      const val = row[info.index] ?? '';
+      if (!val || val.trim() === '' || val.toLowerCase() === 'na' || val.toLowerCase() === 'null') {
+        missingCount++;
+      }
+    }
+    totalMissingAcrossMapped += missingCount;
+    columnQuality[fieldKey] = {
+      original_column: info.colName,
+      mapped_field: fieldKey,
+      total_count: totalRows,
+      missing_count: missingCount,
+      missing_percentage: Math.round((missingCount / totalRows) * 1000) / 10,
+    };
+  }
+
+  // Evaluate valid and excluded rows
+  let validRows = 0;
+  let excludedRows = 0;
+  let minStress = 10;
+  let maxStress = 0;
+  let hasCategoricalStress = false;
+
+  const stressInfo = colIndices.stress_score;
+
+  for (const row of rows) {
+    let isValid = true;
+
+    if (stressInfo) {
+      const rawStress = row[stressInfo.index] ?? '';
+      const parsedStress = parseStressScore(rawStress);
+      if (parsedStress === null) {
+        isValid = false;
+      } else {
+        if (rawStress.toLowerCase() === 'low' || rawStress.toLowerCase() === 'high' || rawStress.toLowerCase() === 'medium') {
+          hasCategoricalStress = true;
+        }
+        if (parsedStress < minStress) minStress = parsedStress;
+        if (parsedStress > maxStress) maxStress = parsedStress;
+      }
+    }
+
+    if (isValid && missingHandling === 'exclude_incomplete_records') {
+      for (const [fieldKey, info] of Object.entries(colIndices)) {
+        if (fieldKey === 'stress_score') continue;
+        const val = row[info.index] ?? '';
+        if (!val || val.trim() === '' || val.toLowerCase() === 'na' || val.toLowerCase() === 'null') {
+          isValid = false;
+          break;
+        }
+      }
+    }
+
+    if (isValid) {
+      validRows++;
+    } else {
+      excludedRows++;
+    }
+  }
+
+  const mappedCount = Math.max(1, Object.keys(colIndices).length);
+  const missingRatio = (totalMissingAcrossMapped / (totalRows * mappedCount));
+  const duplicateRatio = (duplicateRows / totalRows);
+  const dataQualityScore = Math.max(15, Math.min(100, Math.round(100 - (missingRatio * 45) - (duplicateRatio * 30))));
+
+  const warnings: string[] = [];
+  if (hasCategoricalStress) {
+    warnings.push('Stress score was detected as categorical labels (Low/Medium/High) and converted to standardized numeric scale (2.5 / 5.5 / 8.5).');
+  }
+  if (duplicateRows > 0) {
+    warnings.push(`${duplicateRows} duplicate record(s) detected and noted.`);
+  }
+  if (excludedRows > 0) {
+    warnings.push(`${excludedRows} record(s) have missing or incomplete values and are handled via ${missingHandling === 'exclude_incomplete_records' ? 'complete case analysis' : 'pairwise complete strategy'}.`);
+  }
+
+  return {
+    dataset_id: datasetId,
+    is_valid: validRows > 0,
+    errors: validRows === 0 ? ['No valid records found after mapping stress scores.'] : [],
+    warnings,
+    total_rows: totalRows,
+    valid_rows: validRows,
+    excluded_rows: excludedRows,
+    duplicate_rows: duplicateRows,
+    data_quality_score: dataQualityScore,
+    column_quality: columnQuality,
+    stress_range: { min: minStress === 10 ? 0 : minStress, max: maxStress },
+    scoring_method: scoringMethod,
+    missing_handling_method: missingHandling,
+  };
+}
+
 export default function ValidateScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -37,7 +250,7 @@ export default function ValidateScreen() {
     : { stress_score: '' };
   const csvText = params.csvText || '';
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [validationData, setValidationData] = useState<ValidationResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
@@ -57,8 +270,25 @@ export default function ValidateScreen() {
   }, [missingHandling, scoringMethod]);
 
   const runValidation = async () => {
-    setLoading(true);
     setErrorMessage('');
+
+    // 1. Immediately calculate locally in <5ms so UI renders instantly without any wait
+    let localResult: ValidationResponse | null = null;
+    if (csvText && csvText.trim().length > 0) {
+      localResult = computeClientValidation(
+        csvText,
+        mappings,
+        missingHandling,
+        scoringMethod,
+        datasetId
+      );
+      setValidationData(localResult);
+      setLoading(false);
+    } else if (!validationData) {
+      setLoading(true);
+    }
+
+    // 2. Non-blocking background sync with backend
     try {
       const res = await datasetApi.validateDataset({
         dataset_id: datasetId,
@@ -67,9 +297,14 @@ export default function ValidateScreen() {
         scoring_method: scoringMethod,
         csv_text: csvText,
       });
-      setValidationData(res);
+      if (res && res.is_valid !== undefined) {
+        setValidationData(res);
+      }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Validation request failed.');
+      // If client validation is already active, keep local results intact smoothly
+      if (!localResult && !validationData) {
+        setErrorMessage(err.message || 'Validation request failed.');
+      }
     } finally {
       setLoading(false);
     }
@@ -140,7 +375,7 @@ export default function ValidateScreen() {
         <View style={styles.scoreHeader}>
           <View>
             <Text style={styles.scoreHeading}>Data Quality Score</Text>
-            <Text style={styles.scoreSub}>Based on completeness & validity</Text>
+            <Text style={styles.scoreSub}>Completeness, validity & structure</Text>
           </View>
           <View style={[styles.scoreBadge, { backgroundColor: `${scoreColor}18`, borderColor: scoreColor }]}>
             <Text style={[styles.scoreNumber, { color: scoreColor }]}>{score}</Text>
@@ -174,6 +409,57 @@ export default function ValidateScreen() {
         </View>
       </Card>
 
+      {/* Column Integrity & Missing Values Breakdown */}
+      {validationData?.column_quality && Object.keys(validationData.column_quality).length > 0 && (
+        <Card style={styles.breakdownCard}>
+          <View style={styles.breakdownHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Feather name="check-circle" size={18} color={Colors.primary} />
+              <Text style={styles.breakdownTitle}>Missing Values & Column Integrity</Text>
+            </View>
+            <Text style={styles.breakdownCount}>
+              {Object.keys(validationData.column_quality).length} Mapped
+            </Text>
+          </View>
+
+          <View style={styles.columnList}>
+            {Object.entries(validationData.column_quality).map(([fieldKey, colInfo]) => {
+              const completeness = Math.max(0, Math.min(100, Math.round(100 - colInfo.missing_percentage)));
+              const isComplete = colInfo.missing_count === 0;
+              const barColor = completeness >= 95 ? Colors.success : completeness >= 80 ? Colors.warning : Colors.error;
+              const label = FIELD_LABELS[fieldKey] || fieldKey;
+
+              return (
+                <View key={fieldKey} style={styles.columnItem}>
+                  <View style={styles.columnMetaRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.columnFieldName}>{label}</Text>
+                      <Text style={styles.columnOriginalHeader}>
+                        CSV Column: <Text style={{ fontWeight: '700', color: Colors.text }}>{colInfo.original_column}</Text>
+                      </Text>
+                    </View>
+                    <View style={[styles.completenessBadge, { backgroundColor: isComplete ? '#DCFCE7' : '#FEF3C7' }]}>
+                      <Feather
+                        name={isComplete ? 'check' : 'alert-circle'}
+                        size={12}
+                        color={isComplete ? '#166534' : '#92400E'}
+                      />
+                      <Text style={[styles.completenessBadgeText, { color: isComplete ? '#166534' : '#92400E' }]}>
+                        {isComplete ? '100% Complete (0 missing)' : `${completeness}% (${colInfo.missing_count} missing)`}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.progressBarBg}>
+                    <View style={[styles.progressBarFill, { width: `${completeness}%`, backgroundColor: barColor }]} />
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </Card>
+      )}
+
       {/* Warnings / Notices */}
       {validationData?.warnings && validationData.warnings.length > 0 && (
         <View style={styles.warningsContainer}>
@@ -188,7 +474,7 @@ export default function ValidateScreen() {
       )}
 
       {/* Missing Value Handling Strategy */}
-      <Text style={styles.sectionHeading}>Missing Value Handling</Text>
+      <Text style={styles.sectionHeading}>Missing Value Handling Strategy</Text>
       <View style={styles.optionsList}>
         <TouchableOpacity
           style={[
@@ -219,7 +505,7 @@ export default function ValidateScreen() {
             {missingHandling === 'pairwise_complete' && <View style={styles.radioInner} />}
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.optionTitle}>Keep All Valid Stress Records</Text>
+            <Text style={styles.optionTitle}>Keep All Valid Stress Records (Pairwise)</Text>
             <Text style={styles.optionDesc}>
               Includes records with a valid stress score and handles missing covariates pairwise.
             </Text>
@@ -416,5 +702,76 @@ const styles = StyleSheet.create({
   },
   runBtn: {
     marginTop: 10,
+  },
+  breakdownCard: {
+    padding: 16,
+    marginBottom: 20,
+  },
+  breakdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  breakdownTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  breakdownCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  columnList: {
+    gap: 12,
+  },
+  columnItem: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  columnMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  columnFieldName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  columnOriginalHeader: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  completenessBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  completenessBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  progressBarBg: {
+    height: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
   },
 });

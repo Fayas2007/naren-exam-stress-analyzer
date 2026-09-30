@@ -268,7 +268,7 @@ parse_csv_content <- function(content_or_path, original_filename = "dataset.csv"
     )
   }
 
-  preview_rows <- head(df, 5)
+  preview_rows <- head(df, 500)
   preview_list <- lapply(seq_len(nrow(preview_rows)), function(i) {
     as.list(preview_rows[i, , drop = FALSE])
   })

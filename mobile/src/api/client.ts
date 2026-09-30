@@ -101,7 +101,7 @@ export async function apiClient<T>(
         continue;
       }
 
-      console.warn(`[API Notice] ${options.method || 'GET'} ${url}: ${error.message}`);
+      console.log(`[API Info] ${options.method || 'GET'} ${url}: ${error.message}`);
       if (
         error.message &&
         (error.message.includes('Network request failed') ||

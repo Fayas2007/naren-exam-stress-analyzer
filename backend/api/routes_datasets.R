@@ -143,7 +143,11 @@ function(req, res) {
   tryCatch({
     val_res <- validate_dataset_mapping(df, column_mappings, missing_handling, scoring_method)
 
-    status_str <- if (val_res$is_valid) "validated" else "error"
+    safe_int <- function(v, default = 0L) {
+      if (is.null(v) || length(v) == 0 || is.na(v[1])) return(as.integer(default))
+      return(as.integer(v[1]))
+    }
+
     db_execute(
       "UPDATE datasets SET
         valid_rows = $1,
@@ -155,9 +159,9 @@ function(req, res) {
         updated_at = CURRENT_TIMESTAMP
        WHERE id = $7",
       list(
-        as.integer(val_res$valid_rows),
-        as.integer(val_res$excluded_rows),
-        as.integer(val_res$duplicate_rows),
+        safe_int(val_res$valid_rows, 0L),
+        safe_int(val_res$excluded_rows, as.integer(nrow(df))),
+        safe_int(val_res$duplicate_rows, 0L),
         as.character(scoring_method),
         as.character(missing_handling),
         as.character(status_str),
