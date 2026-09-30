@@ -148,6 +148,8 @@ function(req, res) {
       return(as.integer(v[1]))
     }
 
+    status_str <- if (isTRUE(val_res$is_valid)) "validated" else "error"
+
     db_execute(
       "UPDATE datasets SET
         valid_rows = $1,
