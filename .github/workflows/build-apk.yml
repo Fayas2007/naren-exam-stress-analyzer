@@ -36,32 +36,35 @@ jobs:
           EXPO_PUBLIC_API_BASE_URL: https://exam-stress-analyzer-api.onrender.com
         run: npx expo prebuild --platform android --no-install
 
+      - name: Ensure Universal Architectures in gradle.properties
+        working-directory: mobile/android
+        run: |
+          sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64/g' gradle.properties
+
       - name: Make Gradle Wrapper Executable
         working-directory: mobile/android
         run: chmod +x gradlew
 
-      - name: Build Android APK with Gradle
+      - name: Build Universal Release APK with Gradle
         working-directory: mobile/android
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace || ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Find and Prepare APK for Release
+      - name: Find and Prepare Release APK
         run: |
           mkdir -p release-artifacts
-          find mobile/android/app/build/outputs/apk/ -type f -name "*.apk"
-          APK_FILE=$(find mobile/android/app/build/outputs/apk/ -type f -name "*.apk" | head -n 1)
-          if [ -n "$APK_FILE" ]; then
-            cp "$APK_FILE" release-artifacts/exam-stress-analyzer.apk
-            echo "Successfully copied $APK_FILE to release-artifacts/exam-stress-analyzer.apk"
+          if [ -f mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp mobile/android/app/build/outputs/apk/release/app-release.apk release-artifacts/exam-stress-analyzer.apk
+            echo "Successfully prepared Release APK"
           else
-            echo "Error: No APK found!" && exit 1
+            echo "Error: Release APK not found!" && exit 1
           fi
           ls -lh release-artifacts/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ExamStressAnalyzer-APK
+          name: ExamStressAnalyzer-Universal-Release-APK
           path: release-artifacts/exam-stress-analyzer.apk
 
       - name: Create / Update GitHub Release
@@ -72,26 +75,28 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            ## 📱 Exam Stress Analyzer - Android APK v1.0.0
+            ## 📱 Exam Stress Analyzer - Universal Android Release APK v1.0.0
 
             ### 🚀 Direct Download & Install
-            Click below to download the standalone APK directly onto your Android device:
+            Click below to download the standalone Universal Release APK directly onto your Android device:
             - 📥 **[exam-stress-analyzer.apk](https://github.com/Fayas2007/naren-exam-stress-analyzer/releases/download/v1.0.0/exam-stress-analyzer.apk)**
 
             ---
 
             ### 📋 Installation Guide for Android:
-            1. Tap the direct download link above on your phone.
-            2. When downloaded, tap the notification or open the APK from your **Downloads** folder.
-            3. If prompted with *"For your security, your phone is not allowed to install unknown apps from this source"*, tap **Settings** and toggle **Allow from this source**.
-            4. Tap **Install** and open the app!
+            1. If you previously tried installing a draft/debug version or Expo app, **uninstall it first**.
+            2. Tap the direct download link above on your phone.
+            3. When downloaded, tap the notification or open `exam-stress-analyzer.apk` from your **Downloads** folder.
+            4. If prompted with *"For your security, your phone is not allowed to install unknown apps from this source"*, tap **Settings** and toggle **Allow from this source**.
+            5. Tap **Install** and open the app!
 
             ---
 
             ### 🌟 Application Features:
+            - **Universal Device Support**: Compatible with all ARM64, ARMv7, x86, and x86_64 Android smartphones.
             - **Cloud Backend Integration**: Live connection to `https://exam-stress-analyzer-api.onrender.com` (Neon PostgreSQL database).
             - **Multi-Format Ingestion**: Upload and analyze CSV, PDF, Word, and PowerPoint student survey files.
-            - **Statistical & Psychometric Engine**: Cronbach's alpha, PSS-10 norm comparisons, stress level classifications (Low / Moderate / High).
+            - **Statistical & Psychometric Engine**: Cronbach's alpha, PSS-10 norm comparisons, stress level classifications.
             - **AI Stress Copilot**: Instant Gemini-powered conversational guidance and statistical interpretations.
             - **Interactive Visualizations**: Subgroup comparisons, correlation matrices, and stress distributions.
             - **PDF Export**: Generate and share comprehensive medical/academic stress reports directly from your phone.
