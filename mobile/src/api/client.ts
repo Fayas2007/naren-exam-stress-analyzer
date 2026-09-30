@@ -6,13 +6,30 @@ import Constants from 'expo-constants';
 import storage from '../utils/storage';
 
 export const getBaseUrl = (): string => {
-  // 1. Web browser environment: connect to whatever host the browser is viewing
+  // 1. Prioritize explicit EXPO_PUBLIC_API_BASE_URL if configured
+  if (process.env.EXPO_PUBLIC_API_BASE_URL && process.env.EXPO_PUBLIC_API_BASE_URL.trim().length > 0) {
+    let url = process.env.EXPO_PUBLIC_API_BASE_URL.trim();
+    // Remove trailing slash if present
+    url = url.replace(/\/+$/, '');
+    if (Platform.OS === 'android' && (url.includes('localhost') || url.includes('127.0.0.1'))) {
+      url = url.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
+    }
+    return url;
+  }
+
+  // 2. Production fallback default
+  const PRODUCTION_RENDER_URL = 'https://exam-stress-analyzer-api.onrender.com';
+
+  // 3. Web browser environment fallback
   if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.hostname) {
     const host = window.location.hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') {
+      return PRODUCTION_RENDER_URL;
+    }
     return `http://${host}:8000`;
   }
 
-  // 2. Physical device / Expo Go: extract host computer IP from debugger/metro host
+  // 4. Physical device / Expo Go local network fallback
   const hostUri = Constants?.expoConfig?.hostUri || (Constants as any)?.manifest?.debuggerHost || (Constants as any)?.manifest2?.extra?.expoGo?.debuggerHost;
   if (hostUri) {
     const hostIp = hostUri.split(':')[0];
@@ -21,16 +38,7 @@ export const getBaseUrl = (): string => {
     }
   }
 
-  // 3. Use EXPO_PUBLIC_API_BASE_URL if set
-  if (process.env.EXPO_PUBLIC_API_BASE_URL) {
-    let url = process.env.EXPO_PUBLIC_API_BASE_URL.trim();
-    if (Platform.OS === 'android' && (url.includes('localhost') || url.includes('127.0.0.1'))) {
-      url = url.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
-    }
-    return url;
-  }
-
-  // 4. Emulator fallback
+  // 5. Default emulator / localhost fallback
   if (Platform.OS === 'android') {
     return 'http://10.0.2.2:8000';
   }
