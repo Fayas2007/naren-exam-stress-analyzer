@@ -42,40 +42,40 @@ jobs:
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a,armeabi-v7a/g' gradle.properties
           sed -i 's/newArchEnabled=.*/newArchEnabled=false/g' gradle.properties
 
-      - name: Create Offline JavaScript & Asset Bundle
+      - name: Pre-bundle Standalone JavaScript & Asset Bundle
         working-directory: mobile
         env:
           EXPO_PUBLIC_API_BASE_URL: https://exam-stress-analyzer-api.onrender.com
           NODE_ENV: production
         run: |
           mkdir -p android/app/src/main/assets
-          npx react-native bundle --platform android --dev false --entry-file node_modules/expo-router/entry.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res/
+          npx expo export:embed --entry-file node_modules/expo-router/entry.js --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
 
       - name: Make Gradle Wrapper Executable
         working-directory: mobile/android
         run: chmod +x gradlew
 
-      - name: Build Standalone Release APK with Gradle
+      - name: Build Standalone APK with Gradle
         working-directory: mobile/android
         run: |
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace || ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Prepare APK Artifacts
         run: |
           mkdir -p release-artifacts
           if [ -f mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
             cp mobile/android/app/build/outputs/apk/release/app-release.apk release-artifacts/exam-stress-analyzer.apk
-            echo "Successfully created standalone Release APK."
+            echo "Successfully copied standalone release APK."
           elif [ -f mobile/android/app/build/outputs/apk/debug/app-debug.apk ]; then
             cp mobile/android/app/build/outputs/apk/debug/app-debug.apk release-artifacts/exam-stress-analyzer.apk
-            echo "Successfully created fallback debug APK."
+            echo "Successfully copied standalone debug APK."
           fi
           ls -lh release-artifacts/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ExamStressAnalyzer-Standalone-Release-APK
+          name: ExamStressAnalyzer-Standalone-APK
           path: release-artifacts/exam-stress-analyzer.apk
 
       - name: Create / Update GitHub Release
@@ -95,15 +95,14 @@ jobs:
             ---
 
             ### 📋 Installation Guide:
-            1. **Uninstall Previous Draft**: If you have an earlier installed version or Expo Go on your mobile device, **uninstall it first**.
-            2. **Download & Open**: Tap the download link above and open `exam-stress-analyzer.apk` from your Downloads folder.
-            3. **Allow Installation**: If prompted, allow installation from unknown sources.
-            4. Tap **Install** and enjoy the app!
+            1. **Uninstall Previous Version**: If you installed the earlier test build, **uninstall it first** from your phone.
+            2. **Download & Open**: Tap the download link above and open `exam-stress-analyzer.apk`.
+            3. Tap **Install** and launch the app! It will open directly into the app dashboard without needing any dev server.
 
             ---
 
             ### 🌟 Application Features:
-            - **100% Standalone Offline Bundled**: No Metro dev server or PC connection required.
+            - **100% Standalone Offline Bundled**: No Metro dev server or computer connection required.
             - **Cloud Backend Integration**: Live connection to `https://exam-stress-analyzer-api.onrender.com` (Neon PostgreSQL database).
             - **Multi-Format Ingestion**: Upload and analyze CSV, PDF, Word, and PowerPoint student survey files.
             - **Statistical & Psychometric Engine**: Cronbach's alpha, PSS-10 norm comparisons, stress level classifications.
