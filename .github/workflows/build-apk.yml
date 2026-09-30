@@ -42,14 +42,12 @@ jobs:
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a,armeabi-v7a/g' gradle.properties
           sed -i 's/newArchEnabled=.*/newArchEnabled=false/g' gradle.properties
 
-      - name: Pre-bundle Standalone JavaScript & Asset Bundle
-        working-directory: mobile
-        env:
-          EXPO_PUBLIC_API_BASE_URL: https://exam-stress-analyzer-api.onrender.com
-          NODE_ENV: production
+      - name: Embed Standalone JavaScript Bundle into Android Assets
         run: |
-          mkdir -p android/app/src/main/assets
-          npx expo export:embed --entry-file index.js --platform android --dev false --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
+          mkdir -p mobile/android/app/src/main/assets
+          cp mobile/assets/index.android.bundle mobile/android/app/src/main/assets/index.android.bundle
+          echo "Verified embedded index.android.bundle:"
+          ls -lh mobile/android/app/src/main/assets/
 
       - name: Make Gradle Wrapper Executable
         working-directory: mobile/android
@@ -65,10 +63,10 @@ jobs:
           mkdir -p release-artifacts
           if [ -f mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
             cp mobile/android/app/build/outputs/apk/release/app-release.apk release-artifacts/exam-stress-analyzer.apk
-            echo "Successfully copied standalone release APK."
+            echo "Successfully prepared standalone release APK."
           elif [ -f mobile/android/app/build/outputs/apk/debug/app-debug.apk ]; then
             cp mobile/android/app/build/outputs/apk/debug/app-debug.apk release-artifacts/exam-stress-analyzer.apk
-            echo "Successfully copied standalone debug APK."
+            echo "Successfully prepared standalone debug APK."
           fi
           ls -lh release-artifacts/
 
@@ -95,10 +93,9 @@ jobs:
             ---
 
             ### 📋 Installation Guide:
-            1. **Uninstall Previous Draft**: If you have an earlier installed version or Expo Go on your mobile device, **uninstall it first**.
-            2. **Download & Open**: Tap the download link above and open `exam-stress-analyzer.apk` from your Downloads folder.
-            3. **Allow Installation**: If prompted, allow installation from unknown sources.
-            4. Tap **Install** and enjoy the app! It will open directly into the app dashboard without needing any dev server.
+            1. **Uninstall Previous Version**: If you installed the earlier test build, **uninstall it first** from your phone.
+            2. **Download & Open**: Tap the download link above and open `exam-stress-analyzer.apk`.
+            3. Tap **Install** and launch the app! It will open directly into the app dashboard without needing any dev server.
 
             ---
 
