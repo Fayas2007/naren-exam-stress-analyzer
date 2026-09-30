@@ -1,4 +1,3 @@
-// mobile/app/analysis/[id].tsx
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -27,8 +26,10 @@ import DistributionChart from '../../src/components/DistributionChart';
 import SubgroupBarChart from '../../src/components/SubgroupBarChart';
 import CorrelationChart from '../../src/components/CorrelationChart';
 import FloatingChatButton from '../../src/components/FloatingChatButton';
+import { RGraphConsole } from '../../src/components/RGraphConsole';
+import { generateReportHtml } from '../../src/utils/reportGenerator';
 
-type TabKey = 'overview' | 'distribution' | 'relationships' | 'quality' | 'findings';
+type TabKey = 'overview' | 'console' | 'distribution' | 'relationships' | 'quality' | 'findings';
 
 export default function AnalysisDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -44,13 +45,41 @@ export default function AnalysisDetailScreen() {
     loadAnalysis();
   }, [id]);
 
+function safeParse<T>(val: any, fallback: T): T {
+  if (!val) return fallback;
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      return parsed ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return val;
+}
+
+function sanitizeAnalysis(raw: any): Analysis {
+  if (!raw) return raw;
+  return {
+    ...raw,
+    scoring_rules: safeParse(raw.scoring_rules, { method: 'Standard', details: '' }),
+    data_quality_summary: safeParse(raw.data_quality_summary, { total_rows: 0, valid_rows: 0, excluded_rows: 0, duplicate_rows: 0, quality_score: 100 }),
+    descriptive_stats: safeParse(raw.descriptive_stats, {}),
+    stress_distribution: safeParse(raw.stress_distribution, { rules_description: '', categories: [], dominant_category: '' }),
+    correlations: safeParse(raw.correlations, []),
+    group_comparisons: safeParse(raw.group_comparisons, []),
+    statistical_findings: safeParse(raw.statistical_findings, []),
+    limitations: safeParse(raw.limitations, []),
+  };
+}
+
   const loadAnalysis = async () => {
     if (!id) return;
     setLoading(true);
     setErrorMessage('');
     try {
       const data = await analysisApi.getAnalysis(id);
-      setAnalysis(data);
+      setAnalysis(sanitizeAnalysis(data));
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to load analysis details.');
     } finally {
@@ -59,35 +88,62 @@ export default function AnalysisDetailScreen() {
   };
 
   const handleExportPdf = async () => {
-    if (!id || !analysis) return;
+    if (!analysis) return;
     setExporting(true);
     try {
-      const reportRes = await analysisApi.getAnalysisReport(id);
+      // 1. Generate comprehensive, styled HTML report directly (instant, 0ms latency)
+      const htmlContent = generateReportHtml(analysis);
 
       if (Platform.OS === 'web') {
-        // On web, open printable HTML window
-        const win = window.open('', '_blank');
-        if (win) {
-          win.document.write(reportRes.html);
-          win.document.close();
-          win.print();
-        }
-      } else {
-        // On iOS / Android, generate native PDF via expo-print
-        const { uri } = await Print.printToFileAsync({
-          html: reportRes.html,
-        });
-
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(uri, {
-            mimeType: 'application/pdf',
-            dialogTitle: `Export ${analysis.title}`,
-            UTI: 'com.adobe.pdf',
-          });
-        } else {
-          Alert.alert('PDF Generated', `Report PDF created at: ${uri}`);
-        }
+        await Print.printAsync({ html: htmlContent });
+        return;
       }
+
+      // 2. Offer immediate options: Save as PDF (Native Print Viewer) or Share file
+      Alert.alert(
+        'Export Statistical Report',
+        'Select how you would like to export your PDF report:',
+        [
+          {
+            text: 'Save as PDF (Native Preview)',
+            onPress: async () => {
+              try {
+                await Print.printAsync({ html: htmlContent });
+              } catch (e: any) {
+                Alert.alert('Print Error', e?.message || 'Unable to open print preview.');
+              }
+            },
+          },
+          {
+            text: 'Share / Send PDF Document',
+            onPress: async () => {
+              try {
+                const { uri } = await Print.printToFileAsync({ html: htmlContent });
+                const isShareAvailable = await Sharing.isAvailableAsync();
+                if (isShareAvailable) {
+                  await Sharing.shareAsync(uri, {
+                    mimeType: 'application/pdf',
+                    dialogTitle: `Share ${analysis.title} Report`,
+                  });
+                } else {
+                  await Print.printAsync({ html: htmlContent });
+                }
+              } catch (e: any) {
+                // If sharing failed, fall back to native print preview
+                try {
+                  await Print.printAsync({ html: htmlContent });
+                } catch {
+                  Alert.alert('Share Error', e?.message || 'Unable to share PDF.');
+                }
+              }
+            },
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+        ]
+      );
     } catch (err: any) {
       Alert.alert('Export Error', err.message || 'Failed to generate PDF report.');
     } finally {
@@ -187,6 +243,7 @@ export default function AnalysisDetailScreen() {
         >
           {[
             { key: 'overview', label: 'Overview' },
+            { key: 'console', label: 'R Graph Console (8 Plots)' },
             { key: 'distribution', label: 'Distribution' },
             { key: 'relationships', label: 'Relationships' },
             { key: 'quality', label: 'Data Quality' },
@@ -210,6 +267,42 @@ export default function AnalysisDetailScreen() {
         {/* TAB CONTENT: 1. OVERVIEW */}
         {activeTab === 'overview' && (
           <View style={styles.tabSection}>
+            {/* Quick Access to R Graph Console */}
+            <TouchableOpacity
+              style={styles.consolePromptCard}
+              onPress={() => setActiveTab('console')}
+              activeOpacity={0.85}
+            >
+              <View style={styles.consolePromptIconCircle}>
+                <Feather name="terminal" size={20} color="#38BDF8" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.consolePromptTitle}>Interactive R Graph Console</Text>
+                <Text style={styles.consolePromptDesc}>
+                  Select from 8 R-code graphs (distributions, regressions, boxplots & correlation matrix).
+                </Text>
+              </View>
+              <Feather name="arrow-right" size={18} color={Colors.primary} />
+            </TouchableOpacity>
+
+            {/* Quick Access to Exam Stress Predictor */}
+            <TouchableOpacity
+              style={[styles.consolePromptCard, { borderColor: '#FED7AA' }]}
+              onPress={() => router.push('/predict')}
+              activeOpacity={0.85}
+            >
+              <View style={[styles.consolePromptIconCircle, { backgroundColor: '#FFF7ED', borderColor: '#FFEDD5' }]}>
+                <Feather name="trending-up" size={20} color="#FF6B00" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.consolePromptTitle}>Exam Stress Predictor Module</Text>
+                <Text style={styles.consolePromptDesc}>
+                  Enter exam format, study, sleep & anxiety to compute predicted stress scores and tier probabilities.
+                </Text>
+              </View>
+              <Feather name="arrow-right" size={18} color="#FF6B00" />
+            </TouchableOpacity>
+
             {/* Executive Summary Card */}
             <Card style={styles.summaryCard}>
               <Text style={styles.cardHeading}>Executive Summary</Text>
@@ -263,7 +356,14 @@ export default function AnalysisDetailScreen() {
           </View>
         )}
 
-        {/* TAB CONTENT: 2. DISTRIBUTION */}
+        {/* TAB CONTENT: 2. R GRAPH CONSOLE (8 PLOTS & R STUDIO LOOK) */}
+        {activeTab === 'console' && (
+          <View style={styles.tabSection}>
+            <RGraphConsole analysis={analysis} />
+          </View>
+        )}
+
+        {/* TAB CONTENT: 3. DISTRIBUTION */}
         {activeTab === 'distribution' && (
           <View style={styles.tabSection}>
             <DistributionChart
@@ -509,6 +609,35 @@ const styles = StyleSheet.create({
   },
   tabSection: {
     gap: 14,
+  },
+  consolePromptCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 14,
+    padding: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+  },
+  consolePromptIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  consolePromptTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  consolePromptDesc: {
+    fontSize: 11.5,
+    color: '#94A3B8',
+    marginTop: 2,
+    lineHeight: 15,
   },
   summaryCard: {
     padding: 16,

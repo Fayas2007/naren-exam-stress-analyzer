@@ -202,6 +202,29 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Featured Stress Predictor Banner */}
+        <TouchableOpacity
+          style={styles.predictorBannerCard}
+          onPress={() => router.push('/predict')}
+          activeOpacity={0.88}
+        >
+          <View style={styles.predictorBannerIconCircle}>
+            <Feather name="trending-up" size={20} color="#FF6B00" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={styles.predictorBadgeRow}>
+              <Text style={styles.predictorBannerTitle}>Exam Stress Predictor</Text>
+              <View style={styles.newBadgePill}>
+                <Text style={styles.newBadgePillText}>R ML Model</Text>
+              </View>
+            </View>
+            <Text style={styles.predictorBannerDesc}>
+              Simulate stress scores & tiers based on study hours, sleep, exam format & anxiety.
+            </Text>
+          </View>
+          <Feather name="chevron-right" size={20} color="#FF6B00" />
+        </TouchableOpacity>
+
         {/* 4. Active Cohort Spotlight Card (Dark Navy Reference Style) */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionHeading}>Active Cohort Analysis</Text>
@@ -563,6 +586,59 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   actionCardDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 15,
+  },
+  predictorBannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1.2,
+    borderColor: '#FED7AA',
+    gap: 12,
+    shadowColor: '#FF6B00',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  predictorBannerIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#FFF7ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+  },
+  predictorBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
+  predictorBannerTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  newBadgePill: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  newBadgePillText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#38BDF8',
+  },
+  predictorBannerDesc: {
     fontSize: 11,
     color: '#64748B',
     lineHeight: 15,
