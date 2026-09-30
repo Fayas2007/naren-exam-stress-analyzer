@@ -30,6 +30,12 @@ jobs:
         working-directory: mobile
         run: npm install --legacy-peer-deps
 
+      - name: Prebuild Android project
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_API_BASE_URL: https://exam-stress-analyzer-api.onrender.com
+        run: npx expo prebuild --platform android --no-install
+
       - name: Make Gradle Wrapper Executable
         working-directory: mobile/android
         run: chmod +x gradlew
@@ -37,17 +43,20 @@ jobs:
       - name: Build Android APK with Gradle
         working-directory: mobile/android
         run: |
-          ./gradlew assembleRelease --stacktrace --no-daemon || ./gradlew assembleDebug --stacktrace --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace || ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Find and Prepare APK for Release
         run: |
           mkdir -p release-artifacts
-          if [ -f mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
-            cp mobile/android/app/build/outputs/apk/release/app-release.apk release-artifacts/exam-stress-analyzer.apk
-          elif [ -f mobile/android/app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp mobile/android/app/build/outputs/apk/debug/app-debug.apk release-artifacts/exam-stress-analyzer.apk
+          find mobile/android/app/build/outputs/apk/ -type f -name "*.apk"
+          APK_FILE=$(find mobile/android/app/build/outputs/apk/ -type f -name "*.apk" | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" release-artifacts/exam-stress-analyzer.apk
+            echo "Successfully copied $APK_FILE to release-artifacts/exam-stress-analyzer.apk"
+          else
+            echo "Error: No APK found!" && exit 1
           fi
-          ls -la release-artifacts/
+          ls -lh release-artifacts/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -80,7 +89,7 @@ jobs:
             ---
 
             ### 🌟 Application Features:
-            - **Cloud Backend Integration**: Live connection to `https://exam-stress-analyzer-api.onrender.com` (PostgreSQL database).
+            - **Cloud Backend Integration**: Live connection to `https://exam-stress-analyzer-api.onrender.com` (Neon PostgreSQL database).
             - **Multi-Format Ingestion**: Upload and analyze CSV, PDF, Word, and PowerPoint student survey files.
             - **Statistical & Psychometric Engine**: Cronbach's alpha, PSS-10 norm comparisons, stress level classifications (Low / Moderate / High).
             - **AI Stress Copilot**: Instant Gemini-powered conversational guidance and statistical interpretations.
