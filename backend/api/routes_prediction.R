@@ -1,7 +1,13 @@
 # backend/api/routes_prediction.R
 # Endpoints for Exam Stress Prediction Module
 
-source("modules/prediction.R")
+if (!exists("predict_exam_stress")) {
+  if (file.exists("modules/prediction.R")) {
+    source("modules/prediction.R")
+  } else if (file.exists("../modules/prediction.R")) {
+    source("../modules/prediction.R")
+  }
+}
 
 #* Predict exam stress score, level, probabilities, and factor impacts
 #* @post /

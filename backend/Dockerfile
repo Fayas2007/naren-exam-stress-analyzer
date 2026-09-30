@@ -21,4 +21,5 @@ COPY . /app/
 ENV PORT=8000
 EXPOSE 8000
 
+ENTRYPOINT []
 CMD ["Rscript", "run_server.R"]
